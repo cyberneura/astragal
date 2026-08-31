@@ -295,6 +295,14 @@ fn setup_main_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> 
             }
         });
     }
+    if let Some(win) = app.get_webview_window("small") {
+        let win_clone = win.clone();
+        win.on_window_event(move |event| {
+            if let tauri::WindowEvent::Focused(false) = event {
+                let _ = win_clone.hide();
+            }
+        });
+    }
     Ok(())
 }
 
