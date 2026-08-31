@@ -2,10 +2,11 @@ use base64::Engine;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
 use std::sync::Mutex;
+use std::process::Command as ShellCommand;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager,
+    AppHandle, Emitter, Manager, PhysicalPosition,
 };
 use tauri_plugin_single_instance;
 
@@ -189,11 +190,37 @@ fn show_small_window(app: AppHandle) -> Result<(), String> {
         if win.is_visible().unwrap_or(false) {
             win.hide().map_err(|e| e.to_string())?;
         } else {
+            // Position at current mouse cursor
+            if let Ok(pos) = mouse_position() {
+                let _ = win.set_position(pos);
+            }
             win.show().map_err(|e| e.to_string())?;
             win.set_focus().map_err(|e| e.to_string())?;
         }
     }
     Ok(())
+}
+
+fn mouse_position() -> Result<PhysicalPosition<f64>, String> {
+    let output = ShellCommand::new("osascript")
+        .args(["-e", r#"tell application "System Events" to return mouse position as string"#])
+        .output()
+        .map_err(|e| format!("osascript failed: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!("osascript exit: {}", output.status));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let parts: Vec<&str> = stdout.split(", ").collect();
+    if parts.len() != 2 {
+        return Err(format!("unexpected mouse position format: {}", stdout));
+    }
+
+    let x: f64 = parts[0].parse().map_err(|e| format!("parse x: {}", e))?;
+    let y: f64 = parts[1].parse().map_err(|e| format!("parse y: {}", e))?;
+
+    Ok(PhysicalPosition { x, y })
 }
 
 #[tauri::command]
@@ -296,12 +323,12 @@ pub fn run() {
             let _small_win = tauri::WebviewWindowBuilder::new(
                 app,
                 "small",
-                tauri::WebviewUrl::App("index.html".into()),
+                tauri::WebviewUrl::App("small.html".into()),
             )
-            .title("Astragal")
+            .title("")
             .inner_size(480.0, 320.0)
             .resizable(true)
-            .decorations(true)
+            .decorations(false)
             .visible(false)
             .center()
             .build()?;

@@ -1,0 +1,18 @@
+/* ── Small window overrides ──────────────────────────────────────────────── */
+
+#app {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+#terminals {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+/* No tab bar needed */
+
+/* Remove drag regions since small window has no title bar */
+[data-tauri-drag-region] {
+  display: none;
+}

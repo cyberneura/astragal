@@ -5,12 +5,21 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(() => ({
+  // https://vite.dev/config/
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
   // 2. tauri expects a fixed port, fail if that port is not available
+  build: {
+    rollupOptions: {
+      input: {
+        index: "index.html",
+        small: "small.html",
+      },
+    },
+  },
   server: {
     port: 1420,
     strictPort: true,
