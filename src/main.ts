@@ -125,6 +125,11 @@ async function createTab(): Promise<number> {
   // Handle resize
   terminal.onResize(() => {
     fitAddon.fit();
+    invoke("resize_terminal", {
+      tabId,
+      rows: terminal.rows,
+      cols: terminal.cols,
+    }).catch(console.error);
   });
 
   // Focus the terminal after a small delay (needed for xterm to initialize)

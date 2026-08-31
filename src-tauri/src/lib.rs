@@ -1,5 +1,5 @@
 use base64::Engine;
-use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, PtySize};
+use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
 use std::sync::Mutex;
 use tauri::{
@@ -12,6 +12,7 @@ use tauri_plugin_single_instance;
 // ── Pty Session ──────────────────────────────────────────────────────────────
 
 struct PtySession {
+    master: Box<dyn MasterPty + Send>,
     writer: Mutex<Box<dyn Write + Send>>,
     _child: Box<dyn ChildKiller + Send>,
 }
@@ -96,6 +97,7 @@ fn create_terminal(app: AppHandle) -> Result<u32, String> {
     });
 
     let session = PtySession {
+        master: pair.master,
         writer: Mutex::new(writer),
         _child: child,
     };
@@ -125,6 +127,31 @@ fn write_stdin(app: AppHandle, tab_id: u32, data: String) -> Result<(), String> 
             .map_err(|e| format!("Write error: {}", e))?;
         writer.flush().map_err(|e| format!("Flush error: {}", e))?;
         Ok(())
+    } else {
+        Err(format!("No session for tab_id {}", tab_id))
+    }
+}
+
+#[tauri::command]
+fn resize_terminal(
+    app: AppHandle,
+    tab_id: u32,
+    rows: u16,
+    cols: u16,
+) -> Result<(), String> {
+    let app_state = app.state::<AppState>();
+    let sessions = app_state.sessions.lock().map_err(|e| e.to_string())?;
+
+    if let Some(Some(session)) = sessions.get(tab_id as usize) {
+        session
+            .master
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| format!("Resize error: {}", e))
     } else {
         Err(format!("No session for tab_id {}", tab_id))
     }
@@ -284,6 +311,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             create_terminal,
             write_stdin,
+            resize_terminal,
             close_terminal,
             toggle_window,
             show_small_window,

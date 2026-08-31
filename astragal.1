@@ -1,0 +1,27 @@
+.TH ASTRAGAL 1 "2026-08-31" "Astragal 0.1.0" "User Commands"
+.SH NAME
+astragal \- open or control the Astragal terminal app
+.SH SYNOPSIS
+.B astragal
+.RI [ command ]
+.SH DESCRIPTION
+Launches the Astragal macOS application bundle found relative to this script.
+.SH COMMANDS
+.TP
+.B small
+Open or activate Astragal.
+If external IPC is unavailable, this opens the app normally.
+.TP
+.B hide
+Hide Astragal if it is running.
+.TP
+.B help
+Show command usage.
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Show command usage.
+.SH FILES
+.TP
+.I src-tauri/target/release/bundle/macos/Astragal.app
+Default application bundle path.

@@ -1,0 +1,97 @@
+#!/bin/sh
+
+# Command-line launcher for the Astragal macOS application.
+
+set -u
+
+APP_NAME="Astragal"
+BUNDLE_ID="com.cyberneura.astragal"
+
+SCRIPT_PATH=$0
+case "$SCRIPT_PATH" in
+  /*) ;;
+  *) SCRIPT_PATH=$PWD/$SCRIPT_PATH ;;
+esac
+PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" 2>/dev/null && pwd -P)
+
+usage() {
+  cat <<'EOF'
+Usage: astragal [COMMAND]
+
+Open or control the Astragal macOS application.
+
+Commands:
+  small       Open or activate Astragal (small-window IPC is not exposed externally)
+  hide        Hide Astragal if it is running
+  help        Show this help
+
+Options:
+  -h, --help  Show this help
+EOF
+}
+
+find_app_bundle() {
+  bundle="$PROJECT_DIR/src-tauri/target/release/bundle/macos/$APP_NAME.app"
+  if [ -d "$bundle" ]; then
+    printf '%s\n' "$bundle"
+    return 0
+  fi
+
+  # Also support a non-default Cargo target directory or a debug bundle.
+  bundle=$(find "$PROJECT_DIR/src-tauri" -type d -path "*/bundle/macos/$APP_NAME.app" -print 2>/dev/null | head -n 1)
+  if [ -n "$bundle" ]; then
+    printf '%s\n' "$bundle"
+    return 0
+  fi
+
+  return 1
+}
+
+require_app_bundle() {
+  if ! APP_BUNDLE=$(find_app_bundle); then
+    printf '%s\n' "Astragal.app was not found." >&2
+    printf '%s\n' "Build it first with: npm run tauri build" >&2
+    exit 1
+  fi
+}
+
+open_app() {
+  require_app_bundle
+  open "$APP_BUNDLE"
+}
+
+command=${1:-open}
+if [ "$#" -gt 1 ]; then
+  printf 'astragal: too many arguments\n' >&2
+  usage >&2
+  exit 2
+fi
+
+case "$command" in
+  open)
+    open_app
+    ;;
+  small)
+    # Tauri commands are webview IPC and are not directly available to
+    # AppleScript. Opening the bundle is the supported external fallback.
+    open_app
+    osascript -e "tell application id \"$BUNDLE_ID\" to activate" >/dev/null 2>&1 || true
+    ;;
+  hide)
+    osascript <<EOF
+tell application "System Events"
+  if exists (first application process whose bundle identifier is "$BUNDLE_ID") then
+    set visible of (first application process whose bundle identifier is "$BUNDLE_ID") to false
+  end if
+end tell
+EOF
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    printf 'astragal: unknown command: %s\n' "$command" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
