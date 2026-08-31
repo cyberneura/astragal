@@ -11,11 +11,21 @@
   },
   "app": {
     "withGlobalTauri": true,
+    "macOSPrivateApi": true,
     "windows": [
       {
+        "label": "main",
         "title": "Astragal",
-        "width": 800,
-        "height": 600
+        "width": 900,
+        "height": 580,
+        "minWidth": 480,
+        "minHeight": 280,
+        "center": true,
+        "visible": true,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "acceptFirstMouse": true
       }
     ],
     "security": {
@@ -25,6 +35,11 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "category": "Utility",
+    "shortDescription": "A compact macOS terminal",
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
