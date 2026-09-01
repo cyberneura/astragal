@@ -11,7 +11,15 @@
 
   <body>
     <main id="app">
-      <section id="terminals" aria-label="Terminal session"></section>
+      <div id="arrow"></div>
+      <div id="panel">
+        <header id="tab-bar">
+          <div id="tabs" role="tablist"></div>
+          <div id="drag-space"></div>
+          <button id="new-tab" type="button" title="New tab (⌘T)" aria-label="New tab">+</button>
+        </header>
+        <section id="terminals" aria-label="Terminal sessions"></section>
+      </div>
     </main>
   </body>
 </html>

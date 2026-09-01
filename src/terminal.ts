@@ -1,8 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Terminal } from "xterm";
 import type { ITheme } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
+import { Unicode11Addon } from "xterm-addon-unicode11";
 import { WebLinksAddon } from "xterm-addon-web-links";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -22,7 +23,8 @@ export interface Session {
 }
 
 const DEFAULT_THEME: ITheme = {
-  background: "#1e1e2e",
+  // タブバーと同じ色。ウインドウ全体をこの色で塗って継ぎ目を無くす
+  background: "#181825",
   foreground: "#cdd6f4",
   cursor: "#f5e0dc",
   selectionBackground: "#585b70",
@@ -90,6 +92,30 @@ export function loadConfig(): Promise<AppConfig> {
   return invoke<AppConfig>("get_config");
 }
 
+/** ターミナルを作れなかった時に、真っ白なウインドウではなく理由を出す */
+export function showStartupError(container: HTMLElement, error: unknown): void {
+  const box = document.createElement("pre");
+  box.className = "startup-error";
+  box.textContent = `Failed to start the terminal:\n${String(error)}`;
+  container.appendChild(box);
+}
+
+/** 実際に描画されるターミナルの背景色 */
+function terminalBackground(config: AppConfig): string {
+  return config.theme.background ?? DEFAULT_THEME.background ?? "#181825";
+}
+
+/**
+ * ウインドウ全体をターミナルと同じ色で塗る。fit の端数やスクロールバーの溝が
+ * 別の色で浮かないようにするため。
+ */
+export function applyTerminalBackground(config: AppConfig): void {
+  document.documentElement.style.setProperty(
+    "--terminal-background",
+    terminalBackground(config),
+  );
+}
+
 export function setupPtyEvents(): Promise<void> {
   if (!ptyEvents) {
     ptyEvents = registerPtyEvents();
@@ -98,7 +124,12 @@ export function setupPtyEvents(): Promise<void> {
 }
 
 async function registerPtyEvents(): Promise<void> {
-  await listen<{ tab_id: number; data: string }>("terminal-output", ({ payload }) => {
+  // 受信対象をこの webview に限定する。素の listen() は target を Any で登録し、
+  // tauri 側は Any のリスナーには emit_to の絞り込みを無視して配送するため、
+  // もう一方のウインドウの出力まで届いて pendingOutput に溜まり続ける。
+  const self = getCurrentWebviewWindow();
+
+  await self.listen<{ tab_id: number; data: string }>("terminal-output", ({ payload }) => {
     const bytes = decodeBase64(payload.data);
     const session = sessions.get(payload.tab_id);
     if (session) {
@@ -115,7 +146,7 @@ async function registerPtyEvents(): Promise<void> {
     }
   });
 
-  await listen<{ tab_id: number }>("terminal-exit", ({ payload }) => {
+  await self.listen<{ tab_id: number }>("terminal-exit", ({ payload }) => {
     sessions.get(payload.tab_id)?.terminal.write("\r\n\x1b[33m[Process exited]\x1b[0m\r\n");
   });
 }
@@ -134,11 +165,21 @@ export async function startSession(
     theme: { ...DEFAULT_THEME, ...config.theme } as ITheme,
     allowTransparency: true,
     smoothScrollDuration: 0,
+    // terminal.unicode は proposed API 扱いで、これが無いと getter が throw する
+    allowProposedApi: true,
   });
 
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
   terminal.loadAddon(new WebLinksAddon());
+
+  // xterm's built-in width table is Unicode 6, where emoji are one cell wide. The glyph the font
+  // draws is two cells wide, so it gets clipped down the middle and everything after it on the
+  // line sits one column off from where the shell thinks it is. Unicode 11 widths fix both.
+  // activeVersion only accepts a version that has been registered, so this must follow loadAddon.
+  terminal.loadAddon(new Unicode11Addon());
+  terminal.unicode.activeVersion = "11";
+
   terminal.open(element);
 
   const id = await invoke<number>("create_terminal");

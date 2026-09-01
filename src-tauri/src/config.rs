@@ -32,53 +32,61 @@ const MAIN_WINDOW_DEFAULT: ResolvedWindow = ResolvedWindow {
 };
 
 const SMALL_WINDOW_DEFAULT: ResolvedWindow = ResolvedWindow {
-    width: 480.0,
-    height: 320.0,
+    width: 800.0,
+    height: 600.0,
     hide_on_blur: true,
 };
 
 const CONFIG_TEMPLATE: &str = r##"# Astragal config file
 # https://github.com/cyberneura/astragal
 #
-# 書いた項目だけが既定値を上書きする。
+# Only the keys you write here override the defaults.
 
 # font:
-#   # xterm に渡す CSS の font-family 指定。先頭から順に試される。
-#   # Nerd Font に CJK グリフは無いので、CJK フォントを後ろに置くこと。
+#   # CSS font-family list passed to xterm, tried from left to right.
+#   # Nerd Fonts have no CJK glyphs, so keep a CJK font in the fallbacks.
 #   family: "'RobotoMono Nerd Font', Menlo, 'Hiragino Sans', monospace"
 #   size: 13
 
 # shell:
-#   # 省略時は $SHELL、それも無ければ /bin/zsh。
+#   # Defaults to $SHELL, then /bin/zsh.
 #   command: /bin/zsh
-#   # 既定は ["-l"] (ログインシェル)。GUI から起動したアプリは .zprofile を
-#   # 読まないと PATH が最小構成になるため。シェル以外を起動する時は [] にする。
+#   # Defaults to ["-l"] (login shell). An app launched from the GUI does not
+#   # read .zprofile otherwise, so PATH stays minimal. Use [] to run a
+#   # non-shell command.
 #   args: ["-l"]
-#   # pty に渡す追加の環境変数 (TERM / LANG の既定値もここで上書きできる)。
+#   # Extra environment for the pty. TERM and LANG can be overridden here too.
 #   env:
 #     LANG: ja_JP.UTF-8
+
+# Global hotkeys. Set an empty string to disable one.
+# Modifiers: Control / Option (Alt) / Shift / Command (Cmd, Super).
+# hotkeys:
+#   window: "Control+Option+Command+A"
+#   small_window: "Control+Shift+Option+Command+A"
 
 # window:
 #   main:
 #     width: 900
 #     height: 580
-#     # true にすると、フォーカスを失った時に main ウインドウも隠れる。
+#     # Set to true to hide the main window when it loses focus.
 #     hide_on_blur: false
+#   # The popover that drops down from the menu bar icon.
 #   small:
-#     width: 480
-#     height: 320
+#     width: 800
+#     height: 600
 #     hide_on_blur: true
 
-# xterm のテーマ。書いたキーだけが既定のテーマを上書きする。
+# xterm theme. Only the keys you write here override the default theme.
 # theme:
-#   background: "#1e1e2e"
+#   background: "#181825"
 #   foreground: "#cdd6f4"
 #   cursor: "#f5e0dc"
 
-# config_override_command は、標準出力に YAML を吐くコマンドを実行して、
-# その内容をこのファイルの上に再帰マージする。mapping 同士は再帰的に混ざり、
-# スカラーとリストは丸ごと置き換わる。
-# シェルを介さずに実行するため、コマンドは PATH 上にあるか絶対パスで書くこと。
+# config_override_command runs a command whose stdout must be YAML, and merges
+# that YAML over this file. Mappings are merged recursively; scalars and lists
+# are replaced wholesale.
+# It runs without a shell, so the command must be on PATH or an absolute path.
 #
 # config_override_command: op read "op://development/astragal/config-yaml"
 "##;
@@ -91,8 +99,40 @@ pub struct Config {
     pub font: FontConfig,
     pub shell: ShellConfig,
     pub window: WindowsConfig,
+    pub hotkeys: HotkeyConfig,
     /// xterm の theme にそのまま渡す。既定テーマの上にキー単位で被せる。
     pub theme: BTreeMap<String, String>,
+}
+
+/// グローバルホットキー。空文字・null にすると登録しない。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct HotkeyConfig {
+    pub window: Option<String>,
+    pub small_window: Option<String>,
+}
+
+impl Default for HotkeyConfig {
+    fn default() -> Self {
+        Self {
+            window: Some("Control+Option+Command+A".to_string()),
+            small_window: Some("Control+Shift+Option+Command+A".to_string()),
+        }
+    }
+}
+
+impl HotkeyConfig {
+    pub fn window(&self) -> Option<&str> {
+        shortcut(&self.window)
+    }
+
+    pub fn small_window(&self) -> Option<&str> {
+        shortcut(&self.small_window)
+    }
+}
+
+fn shortcut(value: &Option<String>) -> Option<&str> {
+    value.as_deref().map(str::trim).filter(|s| !s.is_empty())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
