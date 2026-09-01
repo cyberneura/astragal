@@ -712,6 +712,12 @@ pub fn run() {
             last_arrow_x: Mutex::new(None),
         })
         .setup(move |app| {
+            // Dock に出さない。メニューバー常駐が主で、Dock アイコンから起動する
+            // 導線が無いため。Info.plist の LSUIElement はバンドルにしか効かず、
+            // dev 実行では素のバイナリが動くので実行時にも設定する。
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
             let cfg = &loaded_config.config;
             setup_tray(app.handle())?;
             setup_hotkeys(app.handle(), &cfg.hotkeys);

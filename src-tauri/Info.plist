@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Dock とアプリスイッチャーに出さない。起動直後に Dock アイコンが一瞬出て
+	     消えるのを避けるため、実行時の activation policy とは別にここでも指定する。 -->
+	<key>LSUIElement</key>
+	<true/>
+</dict>
+</plist>
