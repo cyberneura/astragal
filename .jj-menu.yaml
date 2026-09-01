@@ -1,0 +1,60 @@
+# jj-menu (https://github.com/cyberneura/jj-menu) 用のメニュー定義。
+#
+# 各エントリのコマンドは、jj-menu が組み立てて**呼び出し元のシェルで eval される**。
+# そのため、複数手順は必ず `&&` で繋いで fail-fast にすること (jj-menu は
+# リストの各行を改行で連結するだけで、`set -e` も `&&` も足さない)。
+# 先頭に `set -e` を置く手もあるが、errexit が対話シェルに残って以後の
+# タイポでシェルごと落ちるので使わない。
+# `cd` を含むものはサブシェルで囲み、実行後に作業ディレクトリを動かさない。
+#
+# パッケージマネージャは npm (package-lock.json のみで pnpm-lock.yaml は無い)。
+menu:
+  - title: 開発サーバーを起動
+    help: >
+      vite の dev サーバー (localhost:1420) を立ててから Tauri のネイティブウインドウを開く。
+      **この URL を普通のブラウザで開いても使えない。** フロントは Tauri の IPC (invoke) 越しに
+      ターミナルの pty を触るので、IPC の無いブラウザでは何も動かない。
+      見た目の確認もネイティブウインドウ側で行うこと。
+      Rust 側を触った場合は自動で再ビルドされるぶん、初回起動より時間がかかる。
+      終了は Ctrl-C。
+    shell: ( cd "$(git rev-parse --show-toplevel)" && npm run tauri dev )
+
+  - title: ビルド (.app と dmg)
+    help: >
+      フロントを dist へ吐いてから .app と dmg を作る。
+      成果物: src-tauri/target/release/bundle/
+      **署名されない。** tauri.conf.json に signingIdentity が無く、env でも渡していないので
+      ad-hoc 署名になる。この dmg を他人の Mac に配ると Gatekeeper に弾かれるので、
+      手元で動かして確かめる用と割り切ること。
+      **universal でもない** — `--target` を渡していないのでホストアーキ 1 つぶんだけ。
+    shell: ( cd "$(git rev-parse --show-toplevel)" && npm run tauri build )
+
+  - title: ビルド済みのアプリを起動
+    help: >
+      ランチャースクリプト経由で Astragal.app を開く。
+      スクリプトが src-tauri/target/release/bundle/macos/Astragal.app を探し、
+      無ければ「先にビルドしろ」と言って終わる (debug 側のバンドルもフォールバックで拾う)。
+      **上のビルドで作った版が起動する** — 開発サーバーの方ではないので、
+      直近の変更を見たいなら先にビルドし直すこと。
+    shell: ( cd "$(git rev-parse --show-toplevel)" && ./astragal )
+
+  - title: フロントの型チェックとビルド
+    help: >
+      tsc → vite build を流す。TS だけ直した時に、Rust の再ビルドを待たずに
+      型エラーだけ潰したい時用。`npm run tauri build` も内部でこれを呼んでいるので、
+      ここが通らなければアプリのビルドも通らない。
+    shell: ( cd "$(git rev-parse --show-toplevel)" && npm run build )
+
+  - title: Rust のチェック
+    help: >
+      コード生成なしでコンパイルエラーだけ見る。バイナリを作らないぶん
+      `tauri build` よりずっと速いので、Rust 側を触った後の第一段階に使う。
+      cargo は src-tauri で走らせる必要があるのでサブシェルで cd する。
+    shell: ( cd "$(git rev-parse --show-toplevel)/src-tauri" && cargo check )
+
+  - title: ランチャーの man を読む
+    help: >
+      astragal(1) を表示する。**`man astragal` では引けない** —
+      man page をどこにもインストールしていないので、リポジトリ内のファイルを直接渡す。
+      ランチャーが受けるサブコマンド (open / small / hide) の説明はここにしか無い。
+    shell: man "$(git rev-parse --show-toplevel)/astragal.1"

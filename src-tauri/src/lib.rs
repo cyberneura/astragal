@@ -1,14 +1,18 @@
+mod config;
+
 use base64::Engine;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
+use serde::Serialize;
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
-use std::sync::Mutex;
 use std::process::Command as ShellCommand;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, PhysicalPosition,
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, WebviewWindow,
 };
-use tauri_plugin_single_instance;
 
 // ── Pty Session ──────────────────────────────────────────────────────────────
 
@@ -21,9 +25,58 @@ struct PtySession {
 struct AppState {
     sessions: Mutex<Vec<Option<PtySession>>>,
     next_tab_id: Mutex<u32>,
+    config: config::LoadedConfig,
 }
 
 // ── Commands ─────────────────────────────────────────────────────────────────
+
+/// フロントに渡す設定。ウインドウ設定は Rust 側で適用済みなので含めない。
+#[derive(Serialize)]
+struct FrontendConfig {
+    font: config::FontConfig,
+    theme: BTreeMap<String, String>,
+    /// タブのラベルに使う、起動するコマンドのファイル名
+    shell_name: String,
+    config_path: String,
+    warning: Option<String>,
+}
+
+#[tauri::command]
+fn get_config(app: AppHandle) -> FrontendConfig {
+    let loaded = &app.state::<AppState>().config;
+    let shell = loaded.config.shell.resolve_command();
+    FrontendConfig {
+        font: loaded.config.font.clone(),
+        theme: loaded.config.theme.clone(),
+        shell_name: shell
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "shell".to_string()),
+        config_path: loaded.path.display().to_string(),
+        warning: loaded.warning.clone(),
+    }
+}
+
+fn shell_command(shell: &config::ShellConfig) -> CommandBuilder {
+    let mut cmd = CommandBuilder::new(shell.resolve_command());
+    for arg in &shell.args {
+        cmd.arg(arg);
+    }
+    cmd.env("TERM", "xterm-256color");
+    // Finder / open から起動したアプリは LANG を持たない。未設定のままだと
+    // シェルや各種コマンドが出力を UTF-8 として扱わず、日本語が壊れる。
+    if std::env::var_os("LANG").is_none() {
+        cmd.env("LANG", "en_US.UTF-8");
+    }
+    for (key, value) in &shell.env {
+        cmd.env(key, value);
+    }
+    // GUI 起動時の cwd は / なので、ターミナルの開始位置としては使えない。
+    if let Some(home) = dirs::home_dir() {
+        cmd.cwd(home);
+    }
+    cmd
+}
 
 #[tauri::command]
 fn create_terminal(app: AppHandle) -> Result<u32, String> {
@@ -45,7 +98,7 @@ fn create_terminal(app: AppHandle) -> Result<u32, String> {
         })
         .map_err(|e| format!("Failed to open pty: {}", e))?;
 
-    let cmd = CommandBuilder::new("/bin/zsh");
+    let cmd = shell_command(&app_state.config.config.shell);
     let child = pair
         .slave
         .spawn_command(cmd)
@@ -286,30 +339,37 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn setup_main_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(win) = app.get_webview_window("main") {
-        let win_clone = win.clone();
-        win.on_window_event(move |event| {
-            if let tauri::WindowEvent::Focused(false) = event {
-                let _ = win_clone.hide();
-            }
-        });
-    }
-    if let Some(win) = app.get_webview_window("small") {
-        let win_clone = win.clone();
-        win.on_window_event(move |event| {
-            if let tauri::WindowEvent::Focused(false) = event {
-                let _ = win_clone.hide();
-            }
-        });
-    }
-    Ok(())
+/// フォーカスを失ったらウインドウを隠す。
+///
+/// 「一度フォーカスを得た後の blur」だけを対象にする。起動シーケンス中は
+/// ウインドウ生成やアプリのアクティベート順で、フォーカスを得ていない
+/// ウインドウにも blur が飛んでくる。それで隠すと、表示された直後に消える。
+fn hide_on_blur(win: &WebviewWindow) {
+    let focused_once = AtomicBool::new(false);
+    let target = win.clone();
+    win.on_window_event(move |event| {
+        let tauri::WindowEvent::Focused(focused) = event else {
+            return;
+        };
+        if *focused {
+            focused_once.store(true, Ordering::Relaxed);
+        } else if focused_once.swap(false, Ordering::Relaxed) {
+            let _ = target.hide();
+        }
+    });
 }
 
 // ── App Entry ────────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // ウインドウを出す前に設定を確定させる (config_override_command の実行を
+    // 含むため、ここで数秒かかることがある)。
+    let loaded_config = config::load();
+    if let Some(warning) = &loaded_config.warning {
+        eprintln!("astragal: {warning}");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
@@ -322,28 +382,47 @@ pub fn run() {
         .manage(AppState {
             sessions: Mutex::new(Vec::new()),
             next_tab_id: Mutex::new(0),
+            config: loaded_config.clone(),
         })
-        .setup(|app| {
+        .setup(move |app| {
+            let cfg = &loaded_config.config;
             setup_tray(app.handle())?;
-            setup_main_window(app.handle())?;
 
-            // Create small window for popover mode
-            let _small_win = tauri::WebviewWindowBuilder::new(
+            // small ウインドウを先に作る。生成に伴うフォーカス移動が main の
+            // 表示より後に起きないようにするため。
+            let small_spec = cfg.small_window();
+            let small_win = tauri::WebviewWindowBuilder::new(
                 app,
                 "small",
                 tauri::WebviewUrl::App("small.html".into()),
             )
             .title("")
-            .inner_size(480.0, 320.0)
+            .inner_size(small_spec.width, small_spec.height)
             .resizable(true)
             .decorations(false)
             .visible(false)
             .center()
             .build()?;
+            if small_spec.hide_on_blur {
+                hide_on_blur(&small_win);
+            }
+
+            // main は tauri.conf.json では非表示で作り、設定を反映してから出す。
+            if let Some(win) = app.get_webview_window("main") {
+                let main_spec = cfg.main_window();
+                let _ = win.set_size(LogicalSize::new(main_spec.width, main_spec.height));
+                let _ = win.center();
+                if main_spec.hide_on_blur {
+                    hide_on_blur(&win);
+                }
+                win.show()?;
+                let _ = win.set_focus();
+            }
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_config,
             create_terminal,
             write_stdin,
             resize_terminal,

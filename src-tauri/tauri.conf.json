@@ -21,7 +21,7 @@
         "minWidth": 480,
         "minHeight": 280,
         "center": true,
-        "visible": true,
+        "visible": false,
         "decorations": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
