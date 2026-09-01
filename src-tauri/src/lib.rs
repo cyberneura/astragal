@@ -278,8 +278,64 @@ fn toggle_visibility(win: &WebviewWindow) -> Result<(), String> {
     if win.is_visible().unwrap_or(false) && win.is_focused().unwrap_or(false) {
         return win.hide().map_err(|e| e.to_string());
     }
+    let _ = move_to_cursor_monitor(win);
     win.show().map_err(|e| e.to_string())?;
     win.set_focus().map_err(|e| e.to_string())
+}
+
+/// カーソルが載っているディスプレイの中央へ移す。既にそのディスプレイに居る時は
+/// 動かさない。手で置いた位置を毎回中央へ戻されると使いにくいため。
+fn move_to_cursor_monitor(win: &WebviewWindow) -> Result<(), String> {
+    let Some(target) = monitor_with_cursor(win.app_handle()) else {
+        return Ok(());
+    };
+    if win
+        .current_monitor()
+        .ok()
+        .flatten()
+        .is_some_and(|current| current.position() == target.position())
+    {
+        return Ok(());
+    }
+
+    // 論理ポイントに揃えて計算する。outer_size は移動元モニタの物理値なので、
+    // 移動先の scale が違うと物理のままでは幅が食い違う。
+    let scale = target.scale_factor();
+    let win_scale = win.scale_factor().map_err(|e| e.to_string())?;
+    let size = win.outer_size().map_err(|e| e.to_string())?;
+    let win_width = size.width as f64 / win_scale;
+    let win_height = size.height as f64 / win_scale;
+
+    let left = target.position().x as f64 / scale;
+    let top = target.position().y as f64 / scale;
+    let mon_width = target.size().width as f64 / scale;
+    let mon_height = target.size().height as f64 / scale;
+
+    // 中央揃えの式は、ウインドウが移動先より大きいと負のオフセットになり、上端や
+    // 左端が画面外へ出る。タイトルバーが画面外に出ると掴めなくなり、手で戻せない。
+    let left_limit = left + SCREEN_EDGE_MARGIN;
+    let top_limit = top + MENU_BAR_HEIGHT;
+    let right_limit = left + mon_width - win_width - SCREEN_EDGE_MARGIN;
+    let bottom_limit = top + mon_height - win_height - SCREEN_EDGE_MARGIN;
+
+    let x = left + (mon_width - win_width) / 2.0;
+    let y = top + (mon_height - win_height) / 2.0;
+    // 入り切らない時は左上に寄せる (clamp は lo > hi でパニックするので分岐する)
+    let x = if right_limit >= left_limit {
+        x.clamp(left_limit, right_limit)
+    } else {
+        left_limit
+    };
+    let y = if bottom_limit >= top_limit {
+        y.clamp(top_limit, bottom_limit)
+    } else {
+        top_limit
+    };
+
+    // 物理のまま渡すと tao が移動元ウインドウの scale で論理化するため、スケールの
+    // 違うモニタへ動かす時にずれる。論理座標で渡して換算を挟ませない。
+    win.set_position(LogicalPosition::new(x, y))
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -477,6 +533,7 @@ fn hide_window(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn show_window(app: AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("main") {
+        let _ = move_to_cursor_monitor(&win);
         win.show().map_err(|e| e.to_string())?;
         win.set_focus().map_err(|e| e.to_string())?;
     }
@@ -575,6 +632,27 @@ fn monitor_containing(app: &AppHandle, anchor: &TrayAnchor) -> Option<tauri::Mon
             })
         })
         .or_else(|| app.primary_monitor().ok().flatten())
+}
+
+/// マウスカーソルが載っているモニタ。
+///
+/// 単位系が揃っていないので物理値のままでは比較できない。`cursor_position` は
+/// 「グローバル論理座標 × primary の scale」を返すのに対し、`Monitor` の
+/// position / size は「CGDisplayBounds の論理値 × そのモニタ自身の scale」で、
+/// スケール混在時に食い違う。どちらも自分の scale で割って論理ポイントに戻す。
+fn monitor_with_cursor(app: &AppHandle) -> Option<tauri::Monitor> {
+    let primary_scale = app.primary_monitor().ok().flatten()?.scale_factor();
+    let cursor = app.cursor_position().ok()?;
+    let (x, y) = (cursor.x / primary_scale, cursor.y / primary_scale);
+
+    app.available_monitors().ok()?.into_iter().find(|monitor| {
+        let scale = monitor.scale_factor();
+        let left = monitor.position().x as f64 / scale;
+        let top = monitor.position().y as f64 / scale;
+        let right = left + monitor.size().width as f64 / scale;
+        let bottom = top + monitor.size().height as f64 / scale;
+        x >= left && x < right && y >= top && y < bottom
+    })
 }
 
 fn tray_icon_rect(event: &TrayIconEvent) -> Option<&tauri::Rect> {
@@ -697,6 +775,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(win) = app.get_webview_window("main") {
+                let _ = move_to_cursor_monitor(&win);
                 let _ = win.show();
                 let _ = win.set_focus();
             }
@@ -712,6 +791,12 @@ pub fn run() {
             last_arrow_x: Mutex::new(None),
         })
         .setup(move |app| {
+            // Dock に出さない。メニューバー常駐が主で、Dock アイコンから起動する
+            // 導線が無いため。Info.plist の LSUIElement はバンドルにしか効かず、
+            // dev 実行では素のバイナリが動くので実行時にも設定する。
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
             let cfg = &loaded_config.config;
             setup_tray(app.handle())?;
             setup_hotkeys(app.handle(), &cfg.hotkeys);
@@ -746,6 +831,7 @@ pub fn run() {
                 let main_spec = cfg.main_window();
                 let _ = win.set_size(LogicalSize::new(main_spec.width, main_spec.height));
                 let _ = win.center();
+                let _ = move_to_cursor_monitor(&win);
                 hide_on_close(&win);
                 if main_spec.hide_on_blur {
                     hide_on_blur(&win, || {});
