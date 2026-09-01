@@ -587,9 +587,9 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             let app = tray.app_handle();
             // クリック以外 (hover 等) でも位置が届くので、来るたびに覚えておく。
             // メニュー経由で開いた時にもツノの位置合わせに使う。
-            if let Some(rect) = tray_icon_rect(&event) {
+            if let Some(next) = tray_icon_rect(&event).and_then(|rect| tray_anchor(app, rect)) {
                 if let Ok(mut anchor) = app.state::<AppState>().tray_anchor.lock() {
-                    *anchor = Some(tray_anchor(app, rect));
+                    *anchor = Some(next);
                 }
             }
             if let TrayIconEvent::Click {
@@ -666,13 +666,17 @@ fn monitor_with_cursor(app: &AppHandle) -> Option<tauri::Monitor> {
     })
 }
 
+/// アンカーの記録に使えるイベント。
+///
+/// `Leave` は含めない。Rect は Enter/Move と同じ値しか持たないので情報が増えない
+/// 一方、カーソルは既にアイコンから外れており、別スケールのディスプレイへ抜けて
+/// いると `tray_anchor` が誤った scale で正規化してしまう。
 fn tray_icon_rect(event: &TrayIconEvent) -> Option<&tauri::Rect> {
     match event {
         TrayIconEvent::Click { rect, .. }
         | TrayIconEvent::DoubleClick { rect, .. }
         | TrayIconEvent::Enter { rect, .. }
-        | TrayIconEvent::Move { rect, .. }
-        | TrayIconEvent::Leave { rect, .. } => Some(rect),
+        | TrayIconEvent::Move { rect, .. } => Some(rect),
         _ => None,
     }
 }
@@ -680,23 +684,34 @@ fn tray_icon_rect(event: &TrayIconEvent) -> Option<&tauri::Rect> {
 /// macOS の tray-icon は status item のウインドウの backingScaleFactor で物理値に
 /// 変換済みの Rect を返すため、ここで渡す scale は実質使われない (他プラットフォーム
 /// 用のフォールバック)。
-fn tray_anchor(app: &AppHandle, rect: &tauri::Rect) -> TrayAnchor {
+fn tray_anchor(app: &AppHandle, rect: &tauri::Rect) -> Option<TrayAnchor> {
     // 物理値がどのディスプレイの scale で換算されたかは Rect から分からない。
     // トレイイベントが飛ぶ時カーソルはアイコン上にあるので、カーソルの載っている
     // モニタ = トレイの載っているモニタとして scale を引く。
     //
     // 候補モニタごとに自分の scale で割って判定する方法では直らない。スケールが
     // 混在すると、割った結果が別モニタの論理矩形にも収まってしまうため。
-    let scale = monitor_with_cursor(app)
-        .or_else(|| app.primary_monitor().ok().flatten())
-        .map(|monitor| monitor.scale_factor())
-        .unwrap_or(1.0);
+    let monitor = monitor_with_cursor(app).or_else(|| app.primary_monitor().ok().flatten())?;
+    let scale = monitor.scale_factor();
     let position = rect.position.to_physical::<f64>(scale);
     let size = rect.size.to_physical::<f64>(scale);
-    TrayAnchor {
+    let anchor = TrayAnchor {
         center_x: (position.x + size.width / 2.0) / scale,
         bottom: (position.y + size.height) / scale,
-    }
+    };
+
+    // イベントを処理するまでにカーソルが別ディスプレイへ抜けている可能性がある。
+    // scale の推定が当たっていればアンカーはそのモニタに載るはずなので、載らない
+    // 時は推定を外したとみなして捨てる (呼び出し側は前回のアンカーを保つ)。
+    anchor_on_monitor(
+        &anchor,
+        monitor.position().x as f64,
+        monitor.position().y as f64,
+        monitor.size().width as f64,
+        monitor.size().height as f64,
+        scale,
+    )
+    .then_some(anchor)
 }
 
 /// 設定されたグローバルホットキーを登録する。
