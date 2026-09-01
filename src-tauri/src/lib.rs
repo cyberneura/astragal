@@ -40,7 +40,7 @@ struct AppState {
     last_arrow_x: Mutex<Option<f64>>,
 }
 
-/// トレイアイコンの中心 x と下端 y (物理ピクセル)
+/// トレイアイコンの中心 x と下端 y (グローバル論理ポイント)
 #[derive(Debug, Clone, Copy)]
 struct TrayAnchor {
     center_x: f64,
@@ -466,7 +466,7 @@ fn consume_recent_blur_hide(app: &AppHandle) -> bool {
 /// アイコン中心までの距離 (論理ピクセル) を返す。
 fn anchor_small_window(app: &AppHandle, win: &WebviewWindow) -> Result<f64, String> {
     // outer_size は「今ウインドウが載っているモニタ」の物理値。移動先のスケールが
-    // 違うと物理幅も変わるので、一度論理幅に戻してから移動先の物理値へ直す。
+    // 違うと物理幅も変わるので、論理幅に戻してから使う。
     let current_scale = win.scale_factor().map_err(|e| e.to_string())?;
     let logical_width = win.outer_size().map_err(|e| e.to_string())?.width as f64 / current_scale;
 
@@ -481,13 +481,14 @@ fn anchor_small_window(app: &AppHandle, win: &WebviewWindow) -> Result<f64, Stri
         // トレイのイベントを一度も受けていない時のフォールバック。
         None => {
             let primary = app.primary_monitor().ok().flatten();
-            let scale = primary.as_ref().map(|m| m.scale_factor()).unwrap_or(1.0);
             TrayAnchor {
                 center_x: primary
                     .as_ref()
-                    .map(|m| m.position().x as f64 + m.size().width as f64 / 2.0)
-                    .unwrap_or(logical_width * scale / 2.0),
-                bottom: MENU_BAR_HEIGHT * scale,
+                    .map(|m| {
+                        (m.position().x as f64 + m.size().width as f64 / 2.0) / m.scale_factor()
+                    })
+                    .unwrap_or(logical_width / 2.0),
+                bottom: MENU_BAR_HEIGHT,
             }
         }
     };
@@ -495,18 +496,15 @@ fn anchor_small_window(app: &AppHandle, win: &WebviewWindow) -> Result<f64, Stri
     // メニューバーはアクティブなディスプレイに出るので、アイコンが乗っている
     // モニタを基準にする。primary 固定にすると、サブディスプレイから開いた時に
     // x だけプライマリ側へクランプされてウインドウが別画面に飛ぶ。
-    //
-    // monitor_from_point は使えない。tao の実装は CGDisplayBounds (論理 point) と
-    // 比較するのに、こちらのアンカーは物理値なので Retina では一致しない。
     let monitor = monitor_containing(app, &anchor);
-    let scale = monitor.as_ref().map(|m| m.scale_factor()).unwrap_or(current_scale);
-    let width = logical_width * scale;
 
-    let mut x = anchor.center_x - width / 2.0;
+    let mut x = anchor.center_x - logical_width / 2.0;
     if let Some(monitor) = &monitor {
-        let margin = SCREEN_EDGE_MARGIN * scale;
-        let left = monitor.position().x as f64 + margin;
-        let right = monitor.position().x as f64 + monitor.size().width as f64 - width - margin;
+        let scale = monitor.scale_factor();
+        let monitor_left = monitor.position().x as f64 / scale;
+        let monitor_width = monitor.size().width as f64 / scale;
+        let left = monitor_left + SCREEN_EDGE_MARGIN;
+        let right = monitor_left + monitor_width - logical_width - SCREEN_EDGE_MARGIN;
         if right >= left {
             x = x.clamp(left, right);
         }
@@ -514,9 +512,9 @@ fn anchor_small_window(app: &AppHandle, win: &WebviewWindow) -> Result<f64, Stri
 
     // 物理のまま渡すと、tao が「移動元ウインドウの scale」で論理化するため、
     // スケールの違うモニタへ動かす時にずれる。論理座標で渡して換算を挟ませない。
-    win.set_position(LogicalPosition::new(x / scale, anchor.bottom / scale))
+    win.set_position(LogicalPosition::new(x, anchor.bottom))
         .map_err(|e| e.to_string())?;
-    Ok((anchor.center_x - x) / scale)
+    Ok(anchor.center_x - x)
 }
 
 #[tauri::command]
@@ -608,27 +606,40 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// アンカー (物理値) を含むモニタ。Monitor の position / size も物理値なので
-/// 単位が揃う。見つからなければ primary にフォールバックする。
+/// 論理ポイントのアンカーが、このモニタの矩形に入るか。
 ///
-/// 既知の限界: macOS の「物理座標」はモニタごとに自分の scale を掛けた値なので、
-/// スケールが混在する構成では複数モニタの矩形が重なり、別のモニタを引くことが
-/// ある (吹き出しが別画面に出る)。トレイがどのディスプレイに載っているかを
-/// 知る API が無いため、現状は先に一致したモニタを採る。
-/// 全モニタが同一スケールなら重ならないので正しく引ける。
+/// Monitor の position / size は「CGDisplayBounds の論理値 × そのモニタ自身の
+/// scale」なので、比較する前に自分の scale で割って論理ポイントへ戻す。
+fn anchor_on_monitor(
+    anchor: &TrayAnchor,
+    monitor_x: f64,
+    monitor_y: f64,
+    monitor_width: f64,
+    monitor_height: f64,
+    scale: f64,
+) -> bool {
+    let left = monitor_x / scale;
+    let top = monitor_y / scale;
+    anchor.center_x >= left
+        && anchor.center_x < left + monitor_width / scale
+        && anchor.bottom >= top
+        && anchor.bottom < top + monitor_height / scale
+}
+
+/// アンカーを含むモニタ。見つからなければ primary にフォールバックする。
 fn monitor_containing(app: &AppHandle, anchor: &TrayAnchor) -> Option<tauri::Monitor> {
     app.available_monitors()
         .ok()
         .and_then(|monitors| {
             monitors.into_iter().find(|monitor| {
-                let position = monitor.position();
-                let size = monitor.size();
-                let right = position.x as f64 + size.width as f64;
-                let bottom = position.y as f64 + size.height as f64;
-                anchor.center_x >= position.x as f64
-                    && anchor.center_x < right
-                    && anchor.bottom >= position.y as f64
-                    && anchor.bottom < bottom
+                anchor_on_monitor(
+                    anchor,
+                    monitor.position().x as f64,
+                    monitor.position().y as f64,
+                    monitor.size().width as f64,
+                    monitor.size().height as f64,
+                    monitor.scale_factor(),
+                )
             })
         })
         .or_else(|| app.primary_monitor().ok().flatten())
@@ -670,17 +681,21 @@ fn tray_icon_rect(event: &TrayIconEvent) -> Option<&tauri::Rect> {
 /// 変換済みの Rect を返すため、ここで渡す scale は実質使われない (他プラットフォーム
 /// 用のフォールバック)。
 fn tray_anchor(app: &AppHandle, rect: &tauri::Rect) -> TrayAnchor {
-    let scale = app
-        .primary_monitor()
-        .ok()
-        .flatten()
+    // 物理値がどのディスプレイの scale で換算されたかは Rect から分からない。
+    // トレイイベントが飛ぶ時カーソルはアイコン上にあるので、カーソルの載っている
+    // モニタ = トレイの載っているモニタとして scale を引く。
+    //
+    // 候補モニタごとに自分の scale で割って判定する方法では直らない。スケールが
+    // 混在すると、割った結果が別モニタの論理矩形にも収まってしまうため。
+    let scale = monitor_with_cursor(app)
+        .or_else(|| app.primary_monitor().ok().flatten())
         .map(|monitor| monitor.scale_factor())
         .unwrap_or(1.0);
     let position = rect.position.to_physical::<f64>(scale);
     let size = rect.size.to_physical::<f64>(scale);
     TrayAnchor {
-        center_x: position.x + size.width / 2.0,
-        bottom: position.y + size.height,
+        center_x: (position.x + size.width / 2.0) / scale,
+        bottom: (position.y + size.height) / scale,
     }
 }
 
@@ -863,6 +878,79 @@ mod tests {
     use super::*;
     use std::str::FromStr;
     use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
+
+    /// Retina の primary (論理 1512x982, scale 2) の右に FHD の外部ディスプレイ
+    /// (1920x1080, scale 1) を並べた構成。Monitor が返す物理値で表す。
+    const PRIMARY: (f64, f64, f64, f64, f64) = (0.0, 0.0, 3024.0, 1964.0, 2.0);
+    const EXTERNAL: (f64, f64, f64, f64, f64) = (1512.0, 0.0, 1920.0, 1080.0, 1.0);
+
+    fn on(anchor: &TrayAnchor, m: (f64, f64, f64, f64, f64)) -> bool {
+        anchor_on_monitor(anchor, m.0, m.1, m.2, m.3, m.4)
+    }
+
+    #[test]
+    fn anchor_on_external_display_does_not_match_primary() {
+        // Arrange
+        // 外部ディスプレイの左寄り (論理 x=1612) にトレイがある状態。
+        // 物理値のまま比較していた頃は primary の矩形 [0,3024) にも入ってしまい、
+        // 先に一致した primary を引いて吹き出しが別画面に出ていた。
+        let anchor = TrayAnchor {
+            center_x: 1612.0,
+            bottom: 24.0,
+        };
+
+        // Act / Assert
+        assert!(!on(&anchor, PRIMARY));
+        assert!(on(&anchor, EXTERNAL));
+    }
+
+    #[test]
+    fn anchor_on_primary_display_does_not_match_external() {
+        // Arrange
+        let anchor = TrayAnchor {
+            center_x: 1400.0,
+            bottom: 24.0,
+        };
+
+        // Act / Assert
+        assert!(on(&anchor, PRIMARY));
+        assert!(!on(&anchor, EXTERNAL));
+    }
+
+    #[test]
+    fn monitor_right_edge_is_exclusive() {
+        // Arrange
+        // primary の論理幅は 1512。右端そのものは外部ディスプレイの領域。
+        let edge = TrayAnchor {
+            center_x: 1512.0,
+            bottom: 24.0,
+        };
+        let inside = TrayAnchor {
+            center_x: 1511.0,
+            bottom: 24.0,
+        };
+
+        // Act / Assert
+        assert!(!on(&edge, PRIMARY));
+        assert!(on(&edge, EXTERNAL));
+        assert!(on(&inside, PRIMARY));
+    }
+
+    #[test]
+    fn anchor_below_the_primary_display_is_not_on_it() {
+        // Arrange
+        // primary の論理高さは 1964/2 = 982。物理値のまま比較していた頃は、
+        // 論理 y=1000 も 1964 未満なので内側と判定されていた。
+        let anchor = TrayAnchor {
+            center_x: 700.0,
+            bottom: 1000.0,
+        };
+
+        // Act / Assert
+        assert!(!on(&anchor, PRIMARY));
+        // 外部は論理高さ 1080 で y は収まるが、x が左に外れている
+        assert!(!on(&anchor, EXTERNAL));
+    }
 
     #[test]
     fn default_hotkeys_are_parsable() {
