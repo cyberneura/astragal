@@ -1,0 +1,340 @@
+name: Release
+
+# リリースは main の src-tauri/tauri.conf.json の version で決まる。version を変えて
+# main に載せればリリースされ、変えなければ何度 push しても何も起きない。
+# ローカルからは `pnpm release [patch|minor|major]` (scripts/release.sh) で採番して
+# push する。
+#
+# 実行可否を決めるのは diff ではなく「その version がリリース済みか」。squash / rebase /
+# 直 push で diff は変わるが結果は変わらない (冪等)。path フィルターを付けないのも
+# 同じ理由で、bump が想定外の形で入っても取りこぼさないため。
+on:
+  push:
+    branches: [main]
+  # PR では test ジョブだけが走る (plan 以降は if で止めてある)。門番のテストを
+  # マージ前に同じ定義で回すためで、リリース経路とテストの内容がずれない。
+  pull_request:
+  # version は正しいのに、その時の run が (API の一時障害等で) 失敗した場合の再実行用。
+  # 同じ判定を通るので、公開済みの version をもう一度出すことはできない。
+  workflow_dispatch:
+
+# 既定は権限なし。必要な job にだけ与える。特に test は PR が持ち込んだコードを
+# 実行するので contents: read までしか渡さない (同一リポジトリからの PR では
+# GITHUB_TOKEN が write を持ちうるため、ここを既定に任せない)。
+permissions: {}
+
+# 同時に走らないよう直列化する。1 回の push が 1 つの version に対応するため、
+# キャンセルされた run の version は (bump コミットは main に載ったまま) 永久に
+# 公開されない状態になる。それを防ぐために 2 つとも要る:
+#   cancel-in-progress: false — 走行中の run を後発でキャンセルしない。
+#   queue: max — pending も最大 100 件まで積む。既定の `queue: single` は
+#     「pending は 1 件だけ。新しく queue されたら既存の pending をキャンセルして
+#     置き換える」なので、3 回連続で push すると真ん中の version が消える。
+# (queue: max と cancel-in-progress: true の併用は validation error になる)
+#
+# PR の検査 run は「1 push = 1 version」の直列化とは無関係なので、リリース用の
+# グループへ入れない。同じグループにすると PR が 1 本走るだけでリリースが pending に
+# 積まれる (cancel-in-progress: false なので待たされ続ける)。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('{0}-{1}', github.ref, github.sha) || 'release' }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  # ビルドに時間をかける前に、その version がまだリリースされていないことだけを
+  # 確かめる。ここが false を返す限り、push のたびに macOS ランナーが動くことはない。
+  # PR ではリリース判定そのものが無意味なので走らせない。この job が skipped に
+  # なると、依存している build / publish も (always() を使っていないので) skipped に
+  # なる — PR では test だけが動く。
+  plan:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.decide.outputs.release }}
+    steps:
+      # dispatch は自分の ref を指定できる。未公開 version を載せたブランチが、
+      # そのブランチの内容でリリースされてしまわないようにする (push では main 以外
+      # 起こり得ないが、dispatch では起こる)。
+      - name: Refuse to release from anywhere but main
+        if: github.ref != 'refs/heads/main'
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          echo "::error::releases come from main, and this run is on ${REF}"
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if [ -z "$VERSION" ]; then
+            echo "::error::could not read the version out of src-tauri/tauri.conf.json"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether this version still needs releasing
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # このエンドポイントが答えるのは公開済みの Release だけ (draft にはまだ tag が
+          # 無いので見つからない)。それがここで訊きたいことでもある: 失敗した run が
+          # 残した draft は、同じ version で再実行して埋め直す。
+          #
+          # 404 だけを「未リリース」と読む。rate limit や障害をそう読むと、公開済みの
+          # version をもう一度ビルドして publish ジョブが二重に公開しにいく。
+          status=$(gh api "repos/${GH_REPO}/releases/tags/v${VERSION}" \
+            --silent --include 2>/dev/null | head -n 1 | awk '{print $2}' || true)
+          case "$status" in
+            404)
+              echo "release=true" >> "$GITHUB_OUTPUT"
+              echo "Releasing v${VERSION}"
+              ;;
+            200)
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              echo "v${VERSION} is already released; nothing to do."
+              ;;
+            *)
+              echo "::error::could not tell whether v${VERSION} exists (HTTP ${status:-none}). Not guessing."
+              exit 1
+              ;;
+          esac
+
+  # リリースビルドの門番。方針: cyberneura/cyberneura-github-actions の
+  # docs/build-requires-tests.md
+  #
+  # runs-on を build と同じ macOS にしてあるのは方針のルール 4 による。lib.rs の
+  # トレイ・ホットキー・ウインドウ配置は macOS の API を前提にしており、ubuntu で
+  # cargo test を回しても配布物に入るコードを検査したことにならない。
+  test:
+    # push / dispatch では、実際にリリースする version の時だけ走らせる。plan を
+    # 通さず無条件に走らせると、リリースを伴わない main への push のたびに macOS
+    # ランナーが動く — plan を置いた目的そのものが無くなる。
+    # PR では plan が skipped になり、既定ではこの job も道連れで skipped になる
+    # ので、!cancelled() で自動スキップを外してからイベント名で判定する
+    # (plan が失敗した時は needs.plan.result で止まる)。
+    needs: plan
+    if: >-
+      ${{ !cancelled()
+          && (github.event_name == 'pull_request'
+              || (needs.plan.result == 'success'
+                  && needs.plan.outputs.release == 'true')) }}
+    runs-on: macos-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # ビルド用ではないので universal 用の 2 アーキは要らない。ホストターゲットで
+      # テストする。
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+
+      - name: Cache Rust (cargo + target)
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # cargo test でも build.rs は走る。tauri-build は frontendDist (../dist) が
+      # 実在しないとアプリのコードへ到達する前に落ちるので、先にフロントを作る。
+      # `pnpm build` は tsc の型検査も兼ねている (package.json の build スクリプト)。
+      - name: Build frontend
+        run: pnpm build
+
+      - name: Run Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  build:
+    # test を通らずにビルドしない。needs は同じ run の job にしか効かないので、
+    # テストを別 workflow に切り出さないこと。
+    needs: [plan, test]
+    if: needs.plan.outputs.release == 'true'
+    # Intel / Apple Silicon 両対応の universal バイナリを dmg で配布する。
+    # Astragal は macOS 専用アプリ (トレイ・グローバルホットキー・pty) なので
+    # 他のプラットフォームはビルドしない。
+    runs-on: macos-latest
+    # Rust キャッシュが空の状態での universal (2 アーキ) ビルドに加えて、Apple の
+    # 公証サービス待ちが読めないので長めに取る。ハングした時の上限であって通常は
+    # ここまで使わない。
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    steps:
+      # persist-credentials: false — checkout が write 権限の GITHUB_TOKEN を
+      # .git/config に残さないようにする。以降のステップ (pnpm install の install
+      # script や third-party action) がそれを拾えないようにするため。
+      # Apple の証明書を扱うジョブなので `uses:` は全て commit SHA に固定する
+      # (tauri-action だけ固定しても、先行ステップの action が改変されれば同じ)。
+      # 更新時は行末の `# v4` 等のコメントを頼りに新しい SHA を調べて置き換える。
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # SHA は **master 履歴のコミット**を選ぶこと。`stable` / `1.89.0` などの
+      # 生成ブランチの先端 SHA を pin すると、ブランチが進んだ時にその commit が
+      # GC され、以降の run が Rust セットアップ前に落ちる (action の README の
+      # "Choice of full-length commit SHA" 参照)。master SHA を pin する場合は
+      # ref からツールチェインを推測できないので `toolchain` を明示する。
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Rust (cargo + target)
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # 署名・公証の Secret が 1 つでも欠けていると、tauri-action には空文字が渡るだけで
+      # ビルドは通ってしまう (公証なしの成果物ができる)。publish ジョブは成否しか
+      # 見ないため、そのまま「署名 + 公証済み」のつもりで公開される。ここで明示的に
+      # 落として、配布不能な dmg が公開されるのを防ぐ。
+      - name: Check macOS signing secrets
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          missing=()
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+            APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing repository secrets: ${missing[*]}. Signing and notarization would be silently skipped."
+            exit 1
+          fi
+          echo "All signing and notarization secrets are present."
+
+      # Developer ID 証明書を一時 keychain にインポートする。tauri-action 自身は
+      # 証明書をインポートしないため、ビルド前にこのステップで用意しておく。
+      # keychain のパスワードは使い捨てなので Secret にせずその場で生成する。
+      - name: Import Apple Developer certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 24)
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import "$RUNNER_TEMP/certificate.p12" -k build.keychain \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          # 検索リストにも入れる。codesign は default keychain ではなく検索リストから
+          # identity を引く。default-keychain だけでも実際には通るが、runner イメージの
+          # 既定に依存しないよう明示する。
+          security list-keychains -d user -s build.keychain
+          # 検索リスト経由で Developer ID が引けることをここで確認し、駄目なら即失敗させる。
+          # find-identity は identity が **0 件でも exit 0** なので、単に呼ぶだけでは
+          # チェックにならない。grep で判定してビルドの奥で落ちるのを防ぐ。
+          security find-identity -v -p codesigning
+          security find-identity -v -p codesigning | grep -q "Developer ID Application" || {
+            echo "Error: no 'Developer ID Application' identity in the keychain search list" >&2
+            exit 1
+          }
+          rm "$RUNNER_TEMP/certificate.p12"
+
+      # tauri.conf.json の version から v<version> タグの Release を作成し、
+      # ビルド成果物をアップロードする。ビルドが途中で失敗しても不完全な Release が
+      # 公開されないよう draft で作成し、成功後に publish ジョブで公開する。
+      # APPLE_* を渡すと tauri-action が Developer ID 署名 + 公証 + staple を行う。
+      # Apple 認証情報を受け取るため、可変タグ @v0 ではなく commit SHA に固定する
+      # (タグが差し替えられて secrets を抜かれるサプライチェーン攻撃を防ぐ)。
+      - name: Build and upload to GitHub Release (draft)
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          # tauri CLI を直接叩き、package.json の "tauri" スクリプトを迂回する。
+          # スクリプト側に署名 identity を書く運用になった時に、env で渡した Secret が
+          # インライン代入で上書きされるのを防ぐ (シェルのインライン代入は継承した
+          # env より優先される)。
+          tauriScript: pnpm exec tauri
+          tagName: v__VERSION__
+          releaseName: Astragal v__VERSION__
+          releaseDraft: true
+          prerelease: false
+          args: --target universal-apple-darwin --bundles dmg
+
+  # ビルド・アップロードが成功した時のみ draft を公開する。
+  # 失敗した場合は draft のまま残る (不完全な Release は公開されない)。
+  publish:
+    needs: [plan, build]
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          gh release edit "v${VERSION}" --draft=false --latest
