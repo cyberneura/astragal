@@ -40,7 +40,7 @@ struct AppState {
     last_arrow_x: Mutex<Option<f64>>,
 }
 
-/// トレイアイコンの中心 x と下端 y (物理ピクセル)
+/// トレイアイコンの中心 x と下端 y (グローバル論理ポイント)
 #[derive(Debug, Clone, Copy)]
 struct TrayAnchor {
     center_x: f64,
@@ -53,6 +53,9 @@ const MENU_BAR_HEIGHT: f64 = 24.0;
 const SCREEN_EDGE_MARGIN: f64 = 8.0;
 /// blur で隠れた直後の表示要求を「閉じる操作」とみなす猶予
 const BLUR_HIDE_GUARD: Duration = Duration::from_millis(250);
+/// トレイイベントの記録位置と現在のカーソルのずれを許容する幅 (論理ピクセル)。
+/// 超えたらイベント発生後にカーソルが動いたとみなし、アンカーの更新を見送る。
+const CURSOR_DRIFT_TOLERANCE: f64 = 8.0;
 
 // ── Commands ─────────────────────────────────────────────────────────────────
 
@@ -466,7 +469,7 @@ fn consume_recent_blur_hide(app: &AppHandle) -> bool {
 /// アイコン中心までの距離 (論理ピクセル) を返す。
 fn anchor_small_window(app: &AppHandle, win: &WebviewWindow) -> Result<f64, String> {
     // outer_size は「今ウインドウが載っているモニタ」の物理値。移動先のスケールが
-    // 違うと物理幅も変わるので、一度論理幅に戻してから移動先の物理値へ直す。
+    // 違うと物理幅も変わるので、論理幅に戻してから使う。
     let current_scale = win.scale_factor().map_err(|e| e.to_string())?;
     let logical_width = win.outer_size().map_err(|e| e.to_string())?.width as f64 / current_scale;
 
@@ -481,13 +484,14 @@ fn anchor_small_window(app: &AppHandle, win: &WebviewWindow) -> Result<f64, Stri
         // トレイのイベントを一度も受けていない時のフォールバック。
         None => {
             let primary = app.primary_monitor().ok().flatten();
-            let scale = primary.as_ref().map(|m| m.scale_factor()).unwrap_or(1.0);
             TrayAnchor {
                 center_x: primary
                     .as_ref()
-                    .map(|m| m.position().x as f64 + m.size().width as f64 / 2.0)
-                    .unwrap_or(logical_width * scale / 2.0),
-                bottom: MENU_BAR_HEIGHT * scale,
+                    .map(|m| {
+                        (m.position().x as f64 + m.size().width as f64 / 2.0) / m.scale_factor()
+                    })
+                    .unwrap_or(logical_width / 2.0),
+                bottom: MENU_BAR_HEIGHT,
             }
         }
     };
@@ -495,18 +499,15 @@ fn anchor_small_window(app: &AppHandle, win: &WebviewWindow) -> Result<f64, Stri
     // メニューバーはアクティブなディスプレイに出るので、アイコンが乗っている
     // モニタを基準にする。primary 固定にすると、サブディスプレイから開いた時に
     // x だけプライマリ側へクランプされてウインドウが別画面に飛ぶ。
-    //
-    // monitor_from_point は使えない。tao の実装は CGDisplayBounds (論理 point) と
-    // 比較するのに、こちらのアンカーは物理値なので Retina では一致しない。
     let monitor = monitor_containing(app, &anchor);
-    let scale = monitor.as_ref().map(|m| m.scale_factor()).unwrap_or(current_scale);
-    let width = logical_width * scale;
 
-    let mut x = anchor.center_x - width / 2.0;
+    let mut x = anchor.center_x - logical_width / 2.0;
     if let Some(monitor) = &monitor {
-        let margin = SCREEN_EDGE_MARGIN * scale;
-        let left = monitor.position().x as f64 + margin;
-        let right = monitor.position().x as f64 + monitor.size().width as f64 - width - margin;
+        let scale = monitor.scale_factor();
+        let monitor_left = monitor.position().x as f64 / scale;
+        let monitor_width = monitor.size().width as f64 / scale;
+        let left = monitor_left + SCREEN_EDGE_MARGIN;
+        let right = monitor_left + monitor_width - logical_width - SCREEN_EDGE_MARGIN;
         if right >= left {
             x = x.clamp(left, right);
         }
@@ -514,9 +515,9 @@ fn anchor_small_window(app: &AppHandle, win: &WebviewWindow) -> Result<f64, Stri
 
     // 物理のまま渡すと、tao が「移動元ウインドウの scale」で論理化するため、
     // スケールの違うモニタへ動かす時にずれる。論理座標で渡して換算を挟ませない。
-    win.set_position(LogicalPosition::new(x / scale, anchor.bottom / scale))
+    win.set_position(LogicalPosition::new(x, anchor.bottom))
         .map_err(|e| e.to_string())?;
-    Ok((anchor.center_x - x) / scale)
+    Ok(anchor.center_x - x)
 }
 
 #[tauri::command]
@@ -589,9 +590,11 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             let app = tray.app_handle();
             // クリック以外 (hover 等) でも位置が届くので、来るたびに覚えておく。
             // メニュー経由で開いた時にもツノの位置合わせに使う。
-            if let Some(rect) = tray_icon_rect(&event) {
+            if let Some(next) = tray_icon_geometry(&event)
+                .and_then(|(position, rect)| tray_anchor(app, position, rect))
+            {
                 if let Ok(mut anchor) = app.state::<AppState>().tray_anchor.lock() {
-                    *anchor = Some(tray_anchor(app, rect));
+                    *anchor = Some(next);
                 }
             }
             if let TrayIconEvent::Click {
@@ -608,27 +611,40 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// アンカー (物理値) を含むモニタ。Monitor の position / size も物理値なので
-/// 単位が揃う。見つからなければ primary にフォールバックする。
+/// 論理ポイントのアンカーが、このモニタの矩形に入るか。
 ///
-/// 既知の限界: macOS の「物理座標」はモニタごとに自分の scale を掛けた値なので、
-/// スケールが混在する構成では複数モニタの矩形が重なり、別のモニタを引くことが
-/// ある (吹き出しが別画面に出る)。トレイがどのディスプレイに載っているかを
-/// 知る API が無いため、現状は先に一致したモニタを採る。
-/// 全モニタが同一スケールなら重ならないので正しく引ける。
+/// Monitor の position / size は「CGDisplayBounds の論理値 × そのモニタ自身の
+/// scale」なので、比較する前に自分の scale で割って論理ポイントへ戻す。
+fn anchor_on_monitor(
+    anchor: &TrayAnchor,
+    monitor_x: f64,
+    monitor_y: f64,
+    monitor_width: f64,
+    monitor_height: f64,
+    scale: f64,
+) -> bool {
+    let left = monitor_x / scale;
+    let top = monitor_y / scale;
+    anchor.center_x >= left
+        && anchor.center_x < left + monitor_width / scale
+        && anchor.bottom >= top
+        && anchor.bottom < top + monitor_height / scale
+}
+
+/// アンカーを含むモニタ。見つからなければ primary にフォールバックする。
 fn monitor_containing(app: &AppHandle, anchor: &TrayAnchor) -> Option<tauri::Monitor> {
     app.available_monitors()
         .ok()
         .and_then(|monitors| {
             monitors.into_iter().find(|monitor| {
-                let position = monitor.position();
-                let size = monitor.size();
-                let right = position.x as f64 + size.width as f64;
-                let bottom = position.y as f64 + size.height as f64;
-                anchor.center_x >= position.x as f64
-                    && anchor.center_x < right
-                    && anchor.bottom >= position.y as f64
-                    && anchor.bottom < bottom
+                anchor_on_monitor(
+                    anchor,
+                    monitor.position().x as f64,
+                    monitor.position().y as f64,
+                    monitor.size().width as f64,
+                    monitor.size().height as f64,
+                    monitor.scale_factor(),
+                )
             })
         })
         .or_else(|| app.primary_monitor().ok().flatten())
@@ -640,11 +656,14 @@ fn monitor_containing(app: &AppHandle, anchor: &TrayAnchor) -> Option<tauri::Mon
 /// 「グローバル論理座標 × primary の scale」を返すのに対し、`Monitor` の
 /// position / size は「CGDisplayBounds の論理値 × そのモニタ自身の scale」で、
 /// スケール混在時に食い違う。どちらも自分の scale で割って論理ポイントに戻す。
-fn monitor_with_cursor(app: &AppHandle) -> Option<tauri::Monitor> {
+fn cursor_logical(app: &AppHandle) -> Option<(f64, f64)> {
     let primary_scale = app.primary_monitor().ok().flatten()?.scale_factor();
     let cursor = app.cursor_position().ok()?;
-    let (x, y) = (cursor.x / primary_scale, cursor.y / primary_scale);
+    Some((cursor.x / primary_scale, cursor.y / primary_scale))
+}
 
+/// 論理ポイントの座標を含むモニタ。
+fn monitor_at(app: &AppHandle, x: f64, y: f64) -> Option<tauri::Monitor> {
     app.available_monitors().ok()?.into_iter().find(|monitor| {
         let scale = monitor.scale_factor();
         let left = monitor.position().x as f64 / scale;
@@ -655,33 +674,79 @@ fn monitor_with_cursor(app: &AppHandle) -> Option<tauri::Monitor> {
     })
 }
 
-fn tray_icon_rect(event: &TrayIconEvent) -> Option<&tauri::Rect> {
+fn monitor_with_cursor(app: &AppHandle) -> Option<tauri::Monitor> {
+    let (x, y) = cursor_logical(app)?;
+    monitor_at(app, x, y)
+}
+
+/// アンカーの記録に使えるイベントから、発生時のカーソル位置と矩形を取る。
+/// どちらも同じ scale (トレイの載っているディスプレイのもの) で換算されている。
+///
+/// `Move` と `Leave` は含めない。Rect は `Enter` と同じ値しか持たず情報が増えない
+/// 一方、カーソルが動いている最中のイベントほど、処理までに別ディスプレイへ抜けて
+/// `tray_anchor` の scale 推定を外す確率が高い。`Leave` に至ってはカーソルが確実に
+/// アイコンから外れている。アイコン上に留まる `Enter` とクリックだけを使う。
+fn tray_icon_geometry(
+    event: &TrayIconEvent,
+) -> Option<(&tauri::PhysicalPosition<f64>, &tauri::Rect)> {
     match event {
-        TrayIconEvent::Click { rect, .. }
-        | TrayIconEvent::DoubleClick { rect, .. }
-        | TrayIconEvent::Enter { rect, .. }
-        | TrayIconEvent::Move { rect, .. }
-        | TrayIconEvent::Leave { rect, .. } => Some(rect),
+        TrayIconEvent::Click { position, rect, .. }
+        | TrayIconEvent::DoubleClick { position, rect, .. }
+        | TrayIconEvent::Enter { position, rect, .. } => Some((position, rect)),
         _ => None,
     }
+}
+
+/// イベント発生時からカーソルが動いていないか。
+///
+/// `captured` はイベントが記録したカーソル位置 (物理値)。`scale` の推定が当たって
+/// いて、かつカーソルが動いていなければ、論理へ戻した値は現在位置と一致する。
+/// スケールの違うディスプレイへ抜けていた場合はここでずれるので弾ける。
+///
+/// 既知の限界: 移動先がちょうど `captured / scale` 付近だと、誤った scale でも
+/// 一致してしまう (scale 1 の物理 1612 を scale 2 で戻した 806 に、実カーソルが
+/// 来ている場合など)。トレイの scale を確定できる入力が `Rect` にも `position` にも
+/// 無いため (どちらも同じ未知の scale の物理値)、この重なりは検算では潰せない。
+/// 踏むと吹き出しが 1 回別ディスプレイに出るが、次にアイコンへ触れた時点で直る。
+fn cursor_is_stable(captured: (f64, f64), scale: f64, current: (f64, f64)) -> bool {
+    (captured.0 / scale - current.0).abs() <= CURSOR_DRIFT_TOLERANCE
+        && (captured.1 / scale - current.1).abs() <= CURSOR_DRIFT_TOLERANCE
 }
 
 /// macOS の tray-icon は status item のウインドウの backingScaleFactor で物理値に
 /// 変換済みの Rect を返すため、ここで渡す scale は実質使われない (他プラットフォーム
 /// 用のフォールバック)。
-fn tray_anchor(app: &AppHandle, rect: &tauri::Rect) -> TrayAnchor {
-    let scale = app
-        .primary_monitor()
-        .ok()
-        .flatten()
-        .map(|monitor| monitor.scale_factor())
-        .unwrap_or(1.0);
+fn tray_anchor(
+    app: &AppHandle,
+    captured: &tauri::PhysicalPosition<f64>,
+    rect: &tauri::Rect,
+) -> Option<TrayAnchor> {
+    // 物理値がどのディスプレイの scale で換算されたかは Rect から分からない。
+    // トレイイベントが飛ぶ時カーソルはアイコン上にあるので、カーソルの載っている
+    // モニタ = トレイの載っているモニタとして scale を引く。
+    //
+    // 候補モニタごとに自分の scale で割って判定する方法では直らない。スケールが
+    // 混在すると、割った結果が別モニタの論理矩形にも収まってしまうため。
+    let cursor = cursor_logical(app)?;
+    let monitor = monitor_at(app, cursor.0, cursor.1)?;
+    let scale = monitor.scale_factor();
+
+    // イベントが積まれてから処理されるまでにカーソルが動いていると、上のモニタは
+    // トレイの載っているディスプレイとは限らない。イベント自身が記録した位置と
+    // 突き合わせて、動いていた場合は記録を捨てる (前回のアンカーを保つ)。
+    //
+    // 換算後のアンカーがそのモニタに載るかを見るだけでは不十分。scale を取り違えて
+    // 縮んだ座標が、別モニタの論理矩形に収まってしまうため。
+    if !cursor_is_stable((captured.x, captured.y), scale, cursor) {
+        return None;
+    }
+
     let position = rect.position.to_physical::<f64>(scale);
     let size = rect.size.to_physical::<f64>(scale);
-    TrayAnchor {
-        center_x: position.x + size.width / 2.0,
-        bottom: position.y + size.height,
-    }
+    Some(TrayAnchor {
+        center_x: (position.x + size.width / 2.0) / scale,
+        bottom: (position.y + size.height) / scale,
+    })
 }
 
 /// 設定されたグローバルホットキーを登録する。
@@ -863,6 +928,118 @@ mod tests {
     use super::*;
     use std::str::FromStr;
     use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
+
+    /// Retina の primary (論理 1512x982, scale 2) の右に FHD の外部ディスプレイ
+    /// (1920x1080, scale 1) を並べた構成。Monitor が返す物理値で表す。
+    const PRIMARY: (f64, f64, f64, f64, f64) = (0.0, 0.0, 3024.0, 1964.0, 2.0);
+    const EXTERNAL: (f64, f64, f64, f64, f64) = (1512.0, 0.0, 1920.0, 1080.0, 1.0);
+
+    fn on(anchor: &TrayAnchor, m: (f64, f64, f64, f64, f64)) -> bool {
+        anchor_on_monitor(anchor, m.0, m.1, m.2, m.3, m.4)
+    }
+
+    #[test]
+    fn anchor_on_external_display_does_not_match_primary() {
+        // Arrange
+        // 外部ディスプレイの左寄り (論理 x=1612) にトレイがある状態。
+        // 物理値のまま比較していた頃は primary の矩形 [0,3024) にも入ってしまい、
+        // 先に一致した primary を引いて吹き出しが別画面に出ていた。
+        let anchor = TrayAnchor {
+            center_x: 1612.0,
+            bottom: 24.0,
+        };
+
+        // Act / Assert
+        assert!(!on(&anchor, PRIMARY));
+        assert!(on(&anchor, EXTERNAL));
+    }
+
+    #[test]
+    fn anchor_on_primary_display_does_not_match_external() {
+        // Arrange
+        let anchor = TrayAnchor {
+            center_x: 1400.0,
+            bottom: 24.0,
+        };
+
+        // Act / Assert
+        assert!(on(&anchor, PRIMARY));
+        assert!(!on(&anchor, EXTERNAL));
+    }
+
+    #[test]
+    fn monitor_right_edge_is_exclusive() {
+        // Arrange
+        // primary の論理幅は 1512。右端そのものは外部ディスプレイの領域。
+        let edge = TrayAnchor {
+            center_x: 1512.0,
+            bottom: 24.0,
+        };
+        let inside = TrayAnchor {
+            center_x: 1511.0,
+            bottom: 24.0,
+        };
+
+        // Act / Assert
+        assert!(!on(&edge, PRIMARY));
+        assert!(on(&edge, EXTERNAL));
+        assert!(on(&inside, PRIMARY));
+    }
+
+    #[test]
+    fn anchor_below_the_primary_display_is_not_on_it() {
+        // Arrange
+        // primary の論理高さは 1964/2 = 982。物理値のまま比較していた頃は、
+        // 論理 y=1000 も 1964 未満なので内側と判定されていた。
+        let anchor = TrayAnchor {
+            center_x: 700.0,
+            bottom: 1000.0,
+        };
+
+        // Act / Assert
+        assert!(!on(&anchor, PRIMARY));
+        // 外部は論理高さ 1080 で y は収まるが、x が左に外れている
+        assert!(!on(&anchor, EXTERNAL));
+    }
+
+    #[test]
+    fn cursor_moved_to_a_display_with_another_scale_is_rejected() {
+        // Arrange
+        // 外部 (scale 1) のトレイでイベントが起き、処理までにカーソルが primary
+        // (scale 2) の (700, 500) へ移った状況。イベントの記録位置は物理 1612。
+        // 「換算後が矩形に載るか」だけ見ると 1612/2 = 806 が primary の論理域に
+        // 収まって通過してしまうため、記録位置との突き合わせで弾く。
+        let captured = (1612.0, 24.0);
+
+        // Act
+        let stable = cursor_is_stable(captured, 2.0, (700.0, 500.0));
+
+        // Assert
+        assert!(!stable);
+    }
+
+    #[test]
+    fn cursor_still_on_the_tray_icon_is_accepted() {
+        // Arrange
+        // 外部 (scale 1) のトレイ上にカーソルが留まっている。記録位置は物理 1612 で、
+        // 論理でも 1612。scale 1 で戻せば現在位置と一致する。
+        let captured = (1612.0, 12.0);
+
+        // Act / Assert
+        assert!(cursor_is_stable(captured, 1.0, (1612.0, 12.0)));
+        // 同じ記録を primary の scale で戻すと大きくずれる
+        assert!(!cursor_is_stable(captured, 2.0, (1612.0, 12.0)));
+    }
+
+    #[test]
+    fn small_cursor_drift_while_hovering_is_tolerated() {
+        // Arrange
+        let captured = (1612.0, 12.0);
+
+        // Act / Assert
+        assert!(cursor_is_stable(captured, 1.0, (1616.0, 14.0)));
+        assert!(!cursor_is_stable(captured, 1.0, (1640.0, 12.0)));
+    }
 
     #[test]
     fn default_hotkeys_are_parsable() {
