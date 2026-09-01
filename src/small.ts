@@ -1,121 +1,63 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { Terminal } from "xterm";
-import { FitAddon } from "xterm-addon-fit";
-import { WebLinksAddon } from "xterm-addon-web-links";
-
-// ── State ──────────────────────────────────────────────────────────────────
-
-let terminal: Terminal | null = null;
-let fitAddon: FitAddon | null = null;
-let tabId: number | null = null;
-
-// ── DOM Elements ───────────────────────────────────────────────────────────
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { applyTerminalBackground, loadConfig, showStartupError } from "./terminal";
+import { initTabs } from "./tabs";
 
 const terminalsContainer = document.getElementById("terminals")!;
+const arrow = document.getElementById("arrow")!;
 
-// ── Terminal setup ─────────────────────────────────────────────────────────
-
-async function createTerminal() {
-  const element = document.createElement("div");
-  element.className = "terminal-container";
-  terminalsContainer.appendChild(element);
-
-  terminal = new Terminal({
-    cursorBlink: true,
-    cursorStyle: "block",
-    fontSize: 13,
-    fontFamily: "'SF Mono', 'Fira Code', 'JetBrains Mono', Menlo, monospace",
-    theme: {
-      background: "#1e1e2e",
-      foreground: "#cdd6f4",
-      cursor: "#f5e0dc",
-      selectionBackground: "#585b70",
-      black: "#45475a",
-      red: "#f38ba8",
-      green: "#a6e3a1",
-      yellow: "#f9e2af",
-      blue: "#89b4fa",
-      magenta: "#f5c2e7",
-      cyan: "#94e2d5",
-      white: "#bac2de",
-      brightBlack: "#585b70",
-      brightRed: "#f38ba8",
-      brightGreen: "#a6e3a1",
-      brightYellow: "#f9e2af",
-      brightBlue: "#89b4fa",
-      brightMagenta: "#f5c2e7",
-      brightCyan: "#94e2d5",
-      brightWhite: "#a6adc8",
+/**
+ * 吹き出しのツノをトレイアイコンの真下に合わせる (位置は Rust が実測する)。
+ *
+ * イベントは show() より前に送られるが、webview への配送は非同期なので
+ * 表示より遅れて届くことがある。前回の位置に出してから飛ぶのを避けるため、
+ * ツノは値が届くまで描かず、隠れた時点で消す。
+ */
+async function trackAnchor(): Promise<void> {
+  // 素の listen() は target を Any で登録してしまい、emit_to の絞り込みが効かない
+  await getCurrentWebviewWindow().listen<{ arrow_x: number }>(
+    "small-window-anchor",
+    ({ payload }) => {
+      document.documentElement.style.setProperty("--arrow-x", `${payload.arrow_x}px`);
+      arrow.classList.add("anchored");
     },
-    allowTransparency: true,
-    smoothScrollDuration: 0,
-  });
+  );
 
-  fitAddon = new FitAddon();
-  terminal.loadAddon(fitAddon);
-  terminal.loadAddon(new WebLinksAddon());
-  terminal.open(element);
+  // 起動直後、購読より先に表示された回のイベントは取りこぼしている。
+  // 表示中なら送り直してもらう。
+  await invoke("request_small_anchor");
 
-  // Create pty on backend
-  try {
-    tabId = await invoke<number>("create_terminal");
-  } catch (e) {
-    console.error("Failed to create terminal:", e);
-  }
-
-  // Handle input
-  terminal.onData((data) => {
-    const encoded = btoa(data);
-    invoke("write_stdin", { tabId, data: encoded }).catch(console.error);
-  });
-
-  // Handle resize
-  terminal.onResize(() => {
-    fitAddon?.fit();
-    if (terminal && tabId !== null) {
-      invoke("resize_terminal", {
-        tabId,
-        rows: terminal.rows,
-        cols: terminal.cols,
-      }).catch(console.error);
-    }
-  });
-
-  // Focus the terminal after a small delay
-  setTimeout(() => terminal?.focus(), 50);
-}
-
-// ── Event Listeners ────────────────────────────────────────────────────────
-
-async function setupEventListeners() {
-  await listen<{ tab_id: number; data: string }>("terminal-output", (event) => {
-    const { tab_id, data } = event.payload;
-    if (tab_id === tabId && terminal) {
-      const decoded = atob(data);
-      terminal.write(decoded);
-    }
-  });
-
-  await listen<{ tab_id: number }>("terminal-exit", (event) => {
-    const { tab_id } = event.payload;
-    if (tab_id === tabId && terminal) {
-      terminal.write("\r\n\x1b[33m[Process exited]\x1b[0m\r\n");
+  // 隠れたことを検知できない環境では、次の表示で位置が届くまで前回のツノが
+  // 残るだけなので、取れなくても実害は無い。
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      arrow.classList.remove("anchored");
     }
   });
 }
-
-// ── Init ──────────────────────────────────────────────────────────────────
 
 window.addEventListener("load", async () => {
-  await setupEventListeners();
-  createTerminal();
-});
+  // ツノはターミナルの起動に必須ではないので、失敗しても初期化は続ける。
+  // 位置が二度と届かなくなるため、この時だけは既定位置のツノを出しておく。
+  try {
+    await trackAnchor();
+  } catch (e) {
+    console.error("Failed to subscribe to the anchor event:", e);
+    arrow.classList.add("anchored");
+  }
 
-// Handle window resize
-window.addEventListener("resize", () => {
-  const fa = fitAddon;
-  if (fa) {
-    setTimeout(() => fa.fit(), 10);
+  try {
+    const config = await loadConfig();
+    applyTerminalBackground(config);
+    await initTabs(
+      {
+        tabContainer: document.getElementById("tabs")!,
+        terminalsContainer,
+        newTabButton: document.getElementById("new-tab")!,
+      },
+      config,
+    );
+  } catch (e) {
+    showStartupError(terminalsContainer, e);
   }
 });

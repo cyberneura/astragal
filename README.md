@@ -1,7 +1,95 @@
-# Tauri + Vanilla TS
+# Astragal
 
-This template should help get you started developing with Tauri in vanilla HTML, CSS and Typescript.
+macOS 用の軽量ターミナルアプリ (Tauri 2.x + xterm.js)。
 
-## Recommended IDE Setup
+- タブ付きのメインウインドウ
+- メニューバー (トレイ) のアイコン直下に出る、吹き出し型の小さいターミナル
+  (アイコンを左クリック、右クリックでメニュー)
+- ウインドウの表示・非表示のグローバルホットキー
+- `~/.config/astragal/config.yaml` による設定
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+## 設定
+
+設定ファイルは `~/.config/astragal/config.yaml` (無ければ `config.yml`)。
+初回起動時に、全項目をコメントアウトしたテンプレートが自動生成される。
+書いた項目だけが既定値を上書きする。
+
+```yaml
+font:
+  # CSS font-family list passed to xterm.
+  # Nerd Fonts have no CJK glyphs, so keep a CJK font in the fallbacks.
+  family: "'RobotoMono Nerd Font', Menlo, 'Hiragino Sans', monospace"
+  size: 13
+
+shell:
+  command: /bin/zsh # defaults to $SHELL, then /bin/zsh
+  args: ["-l"] # login shell by default
+  env:
+    LANG: ja_JP.UTF-8
+
+# Global hotkeys. Set an empty string to disable one.
+hotkeys:
+  window: "Control+Option+Command+A"
+  small_window: "Control+Shift+Option+Command+A"
+
+window:
+  main:
+    width: 900
+    height: 580
+    hide_on_blur: false
+  # The popover that drops down from the menu bar icon.
+  small:
+    width: 800
+    height: 600
+    hide_on_blur: true
+
+theme: # xterm theme; only the keys you write are overridden
+  background: "#181825"
+  foreground: "#cdd6f4"
+```
+
+ホットキーの修飾子は `Control` / `Option` (`Alt`) / `Shift` / `Command` (`Cmd`, `Super`)。
+登録に失敗した場合は理由がターミナルに警告として出る。ただし macOS の
+`RegisterEventHotKey` はプロセス単位の登録なので、他のアプリやシステムが同じ
+組み合わせを握っている場合は**登録自体は成功し、キーが届かないだけで警告も出ない**。
+効かない時は組み合わせを変えること。
+
+`ASTRAGAL_CONFIG` 環境変数に設定ファイルのパスを渡すと、その内容で起動する。
+
+### config_override_command
+
+標準出力に YAML を吐くコマンドを実行して、その結果を設定ファイルの上に
+再帰マージする。1Password 等から設定を引くための口。
+
+```yaml
+config_override_command: op read "op://development/astragal/config-yaml"
+```
+
+- mapping 同士は再帰的にマージされ、スカラーとリストは丸ごと置き換わる。
+- **シェルを介さずに実行する**。コマンドは PATH 上にあるか絶対パスで書く
+  (PATH には `/opt/homebrew/bin` と `/usr/local/bin` が補われる)。
+- 60 秒でタイムアウトする。取得に失敗した場合はローカルの設定のまま起動し、
+  理由をターミナルに警告として表示する。
+
+## 開発
+
+```shell
+pnpm install
+pnpm tauri dev
+```
+
+## ビルド
+
+```shell
+pnpm tauri build
+```
+
+ビルドすると `src-tauri/target/release/bundle/macos/Astragal.app` ができる。
+`./astragal` はこのバンドルを起動する CLI ラッパー。
+
+## テスト
+
+```shell
+cd src-tauri && cargo test
+pnpm exec tsc --noEmit
+```
