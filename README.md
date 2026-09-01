@@ -93,3 +93,31 @@ pnpm tauri build
 cd src-tauri && cargo test
 pnpm exec tsc --noEmit
 ```
+
+## アイコン
+
+マスターは `resources/app-icons/` にあり、`generate.py` (要 `rsvg-convert`) で
+SVG から起こす。用途ごとに余白と色の扱いが違うので 4 枚に分かれている。
+
+| ファイル | 用途 |
+|---|---|
+| `astragal-mac-icon.png` | macOS アプリアイコン。背景に 10% の余白 |
+| `astragal-favicon.png` | Windows / Web。余白なし |
+| `tray-mac.png` | メニューバー。単色 + 透過 (template 画像) |
+| `tray-win.png` | Windows トレイ。カラー |
+
+`src-tauri/icons/` への反映は下記の順で行う。`pnpm tauri icon` は
+`src-tauri/icons/` を毎回まるごと上書きするので、単発で流すと mac の余白が黙って消える。
+
+```shell
+python3 resources/app-icons/generate.py
+
+TMP=$(mktemp -d)
+pnpm tauri icon "$PWD/resources/app-icons/astragal-mac-icon.png"
+cp src-tauri/icons/icon.icns "$TMP/"
+pnpm tauri icon "$PWD/resources/app-icons/astragal-favicon.png"
+cp "$TMP/icon.icns" src-tauri/icons/
+rm -rf "$TMP" src-tauri/icons/android src-tauri/icons/ios
+
+cp resources/app-icons/tray-mac.png resources/app-icons/tray-win.png src-tauri/icons/
+```

@@ -483,6 +483,19 @@ fn show_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// メニューバー用。template 画像はアルファしか使われないので単色 + 透過の専用素材。
+/// アプリアイコンを流用すると階調が落ちて黒い塊になる。
+#[cfg(target_os = "macos")]
+fn tray_icon() -> Result<tauri::image::Image<'static>, tauri::Error> {
+    tauri::image::Image::from_bytes(include_bytes!("../icons/tray-mac.png"))
+}
+
+/// Windows のトレイに template の概念は無いのでカラーのまま使う。
+#[cfg(not(target_os = "macos"))]
+fn tray_icon() -> Result<tauri::image::Image<'static>, tauri::Error> {
+    tauri::image::Image::from_bytes(include_bytes!("../icons/tray-win.png"))
+}
+
 fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let show_small = MenuItemBuilder::with_id("show_small", "Show Small Window").build(app)?;
     let toggle = MenuItemBuilder::with_id("toggle", "Show Window").build(app)?;
@@ -497,7 +510,9 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
 
     let _tray = TrayIconBuilder::new()
-        .icon(app.default_window_icon().unwrap().clone())
+        .icon(tray_icon()?)
+        // macOS 以外では無視される
+        .icon_as_template(true)
         .menu(&menu)
         // 左クリックは吹き出しを出す。メニューは右クリックに寄せる
         .show_menu_on_left_click(false)
