@@ -8,6 +8,14 @@ macOS 用の軽量ターミナルアプリ (Tauri 2.x + xterm.js)。
 - ウインドウの表示・非表示のグローバルホットキー
 - `~/.config/astragal/config.yaml` による設定
 
+## インストール
+
+```shell
+brew install --cask cyberneura/tap/astragal
+```
+
+配布物は Developer ID で署名し公証済みの universal dmg (Intel / Apple Silicon)。
+
 ## 設定
 
 設定ファイルは `~/.config/astragal/config.yaml` (無ければ `config.yml`)。
@@ -86,6 +94,29 @@ pnpm tauri build
 
 ビルドすると `src-tauri/target/release/bundle/macos/Astragal.app` ができる。
 `./astragal` はこのバンドルを起動する CLI ラッパー。
+
+## リリース
+
+リリースは `src-tauri/tauri.conf.json` の version で決まる。version を変えて main に
+載せれば `.github/workflows/release.yml` がビルドして GitHub Release を作り、変えなければ
+何度 push しても何も起きない (実行可否を決めるのは diff ではなく「その version が
+リリース済みか」)。
+
+```shell
+pnpm release            # patch を採番して main に push し、ビルドを watch する
+pnpm release minor
+pnpm release major
+```
+
+`scripts/release.sh` は main がクリーンで origin/main と一致している時だけ動く。
+ビルドは macOS ランナーで走り、Developer ID 署名と公証を経て `v<version>` タグの
+Release に universal dmg を上げる。署名用の Secret (`APPLE_CERTIFICATE` /
+`APPLE_CERTIFICATE_PASSWORD` / `APPLE_SIGNING_IDENTITY` / `APPLE_ID` /
+`APPLE_PASSWORD` / `APPLE_TEAM_ID`) はリポジトリに登録済みで、1 つでも欠けると
+ビルドの手前で失敗する (欠けたまま進むと公証なしの dmg が黙って公開されるため)。
+
+Homebrew の cask (cyberneura/homebrew-tap) は最新リリースを毎時見て自分を更新する
+ので、`brew` に出るまで最大 1 時間遅れる。
 
 ## テスト
 
