@@ -98,11 +98,17 @@ async function closeTab(tabId: number) {
   }
 
   const tab = tabs[index];
+  const wasActive = activeTabId === tabId;
   tab.element.remove();
   tab.button.remove();
   tabs.splice(index, 1);
   await closeSession(tab.session);
 
+  // 裏のタブを閉じただけならアクティブは動かさない。切り替えてしまうと、
+  // 以降のキー入力が別のシェルに飛ぶ。
+  if (!wasActive) {
+    return;
+  }
   if (tabs.length > 0) {
     switchToTab(tabs[Math.min(index, tabs.length - 1)].session.id);
   } else {
