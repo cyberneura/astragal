@@ -290,31 +290,51 @@ pub fn load() -> LoadedConfig {
 }
 
 fn load_from(path: &Path) -> Result<(Config, Option<String>), String> {
-    let mut warning = ensure_config_file(path).err();
+    let mut warnings: Vec<String> = ensure_config_file(path).err().into_iter().collect();
 
     let text = std::fs::read_to_string(path)
         .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
-    let mut doc = parse_mapping(&text, &path.display().to_string())?;
+    let local = parse_mapping(&text, &path.display().to_string())?;
 
-    match override_command(&doc) {
+    let mut merged = None;
+    match override_command(&local) {
         Ok(Some(command)) => match fetch_override(&command) {
-            Ok(overrides) => merge_mapping(&mut doc, &overrides),
+            Ok(overrides) => {
+                // ローカル側は残しておく。マージ結果が使えなかった時に戻すため。
+                let mut doc = local.clone();
+                merge_mapping(&mut doc, &overrides);
+                merged = Some(doc);
+            }
             // 取得できなくてもローカルの設定で起動する。黙って落とすと
             // 「上書きが効いていない」ことに気付けないので warning に残す。
-            Err(e) => warning = Some(e),
+            Err(e) => warnings.push(e),
         },
         Ok(None) => {}
-        Err(e) => warning = Some(e),
+        Err(e) => warnings.push(e),
     }
-    // 適用済みなので落とす (取得 YAML 側が持っていても再帰取得はしない)。
-    doc.remove(CONFIG_OVERRIDE_COMMAND_KEY);
 
-    let mut config = serde_yaml::from_value::<Config>(Value::Mapping(doc))
-        .map_err(|e| format!("Invalid config in {}: {e}", path.display()))?;
+    let mut config = match merged {
+        Some(doc) => match parse_config(doc, path) {
+            Ok(config) => config,
+            // マージ結果が壊れていてもローカルの設定は生きている。ここで
+            // 諦めると、取得先の 1 つの値のせいで全設定が既定値に落ちる。
+            Err(e) => {
+                warnings.push(format!("{e} (ignored the override)"));
+                parse_config(local, path)?
+            }
+        },
+        None => parse_config(local, path)?,
+    };
 
-    let mut warnings: Vec<String> = warning.into_iter().collect();
     warnings.extend(config.sanitize());
     Ok((config, (!warnings.is_empty()).then(|| warnings.join("\n"))))
+}
+
+fn parse_config(mut doc: Mapping, path: &Path) -> Result<Config, String> {
+    // 適用済みなので落とす (取得 YAML 側が持っていても再帰取得はしない)。
+    doc.remove(CONFIG_OVERRIDE_COMMAND_KEY);
+    serde_yaml::from_value::<Config>(Value::Mapping(doc))
+        .map_err(|e| format!("Invalid config in {}: {e}", path.display()))
 }
 
 fn fetch_override(command: &str) -> Result<Mapping, String> {
@@ -778,6 +798,26 @@ mod tests {
         assert_eq!(config.font.size, 22.0);
         assert_eq!(config.font.family, "Menlo");
         assert!(warning.is_none(), "unexpected warning: {warning:?}");
+    }
+
+    #[test]
+    fn invalid_override_value_keeps_the_local_config() {
+        // Arrange
+        let path = temp_dir("override-invalid").join("config.yaml");
+        std::fs::write(
+            &path,
+            "font:\n  size: 15\n  family: Menlo\n\
+             config_override_command: '/bin/echo {\"font\": {\"size\": \"nope\"}}'\n",
+        )
+        .expect("should write config");
+
+        // Act
+        let (config, warning) = load_from(&path).expect("should load");
+
+        // Assert
+        assert_eq!(config.font.size, 15.0);
+        assert_eq!(config.font.family, "Menlo");
+        assert!(warning.expect("should warn").contains("ignored the override"));
     }
 
     #[test]

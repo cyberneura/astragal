@@ -53,7 +53,11 @@ const sessions = new Map<number, Session>();
 const pendingOutput = new Map<number, Uint8Array[]>();
 /** 同上。すぐ終了するコマンドだと、登録より先に終了が届く */
 const pendingExit = new Set<number>();
-/** 明示的に閉じたタブ。pty の後始末で飛んでくる終了イベントを捨てるために持つ */
+/**
+ * 明示的に閉じたタブ。閉じた後にも pty の後始末で出力と終了イベントが届くので、
+ * 「まだ登録されていない」と区別して捨てるために持つ。
+ * 消さずに残す (id は再利用されないので、閉じたタブ 1 つにつき数値 1 個で済む)。
+ */
 const closedSessions = new Set<number>();
 let ptyEvents: Promise<void> | null = null;
 
@@ -134,14 +138,17 @@ async function registerPtyEvents(): Promise<void> {
   const self = getCurrentWebviewWindow();
 
   await self.listen<{ tab_id: number; data: string }>("terminal-output", ({ payload }) => {
-    const bytes = decodeBase64(payload.data);
     const session = sessions.get(payload.tab_id);
     if (session) {
       // pty の読み出し境界でマルチバイト文字が分断されるので、文字列では
       // なくバイト列で渡す (xterm 内蔵の UTF-8 デコーダが跨いで処理する)。
-      session.terminal.write(bytes);
+      session.terminal.write(decodeBase64(payload.data));
       return;
     }
+    if (closedSessions.has(payload.tab_id)) {
+      return;
+    }
+    const bytes = decodeBase64(payload.data);
     const queued = pendingOutput.get(payload.tab_id);
     if (queued) {
       queued.push(bytes);
@@ -156,9 +163,7 @@ async function registerPtyEvents(): Promise<void> {
       writeExitNotice(session);
       return;
     }
-    // 閉じたタブの後始末で飛んできたものは捨てる。積むと、id は再利用されないので
-    // タブを開閉するたびに pendingExit が増え続ける。
-    if (closedSessions.delete(payload.tab_id)) {
+    if (closedSessions.has(payload.tab_id)) {
       return;
     }
     pendingExit.add(payload.tab_id);
