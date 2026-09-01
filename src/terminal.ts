@@ -51,6 +51,8 @@ const DEFAULT_THEME: ITheme = {
 const sessions = new Map<number, Session>();
 /** create_terminal が id を返すより先に届いた出力の置き場 */
 const pendingOutput = new Map<number, Uint8Array[]>();
+/** 同上。すぐ終了するコマンドだと、登録より先に終了が届く */
+const pendingExit = new Set<number>();
 let ptyEvents: Promise<void> | null = null;
 
 // ── Encoding ─────────────────────────────────────────────────────────────────
@@ -147,7 +149,12 @@ async function registerPtyEvents(): Promise<void> {
   });
 
   await self.listen<{ tab_id: number }>("terminal-exit", ({ payload }) => {
-    sessions.get(payload.tab_id)?.terminal.write("\r\n\x1b[33m[Process exited]\x1b[0m\r\n");
+    const session = sessions.get(payload.tab_id);
+    if (session) {
+      writeExitNotice(session);
+    } else {
+      pendingExit.add(payload.tab_id);
+    }
   });
 }
 
@@ -191,6 +198,10 @@ export async function startSession(
     pendingOutput.delete(id);
     queued.forEach((bytes) => terminal.write(bytes));
   }
+  // 出力を流し切ってから終了を出す (順序が入れ替わらないように)
+  if (pendingExit.delete(id)) {
+    writeExitNotice(session);
+  }
 
   terminal.onData((data) => writeStdin(id, new TextEncoder().encode(data)));
   terminal.onBinary((data) => writeStdin(id, binaryStringToBytes(data)));
@@ -201,9 +212,14 @@ export async function startSession(
   return session;
 }
 
+function writeExitNotice(session: Session): void {
+  session.terminal.write("\r\n\x1b[33m[Process exited]\x1b[0m\r\n");
+}
+
 export async function closeSession(session: Session): Promise<void> {
   sessions.delete(session.id);
   pendingOutput.delete(session.id);
+  pendingExit.delete(session.id);
   session.terminal.dispose();
   await invoke("close_terminal", { tabId: session.id }).catch(console.error);
 }
