@@ -201,6 +201,21 @@ pub struct WindowSpec {
 }
 
 impl WindowSpec {
+    fn sanitize(&mut self, label: &str, warnings: &mut Vec<String>) {
+        for (name, value) in [("width", &mut self.width), ("height", &mut self.height)] {
+            let Some(size) = *value else {
+                continue;
+            };
+            if !(size.is_finite() && size > 0.0) {
+                warnings.push(format!(
+                    "window.{label}.{name} must be a positive number (got {size}); \
+                     using the default"
+                ));
+                *value = None;
+            }
+        }
+    }
+
     fn resolve(&self, defaults: ResolvedWindow) -> ResolvedWindow {
         ResolvedWindow {
             width: self.width.unwrap_or(defaults.width),
@@ -218,6 +233,25 @@ pub struct ResolvedWindow {
 }
 
 impl Config {
+    /// 使えない値を既定値に戻し、その理由を返す。
+    ///
+    /// 0 や負値・NaN のサイズをそのまま渡すと、ウインドウが作れずに setup ごと
+    /// 失敗する (= 設定ミスでアプリが起動しなくなる)。フォントサイズも同様で、
+    /// 0 だと fit の計算が NaN になって描画が壊れる。
+    fn sanitize(&mut self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        self.window.main.sanitize("main", &mut warnings);
+        self.window.small.sanitize("small", &mut warnings);
+        if !(self.font.size.is_finite() && self.font.size > 0.0) {
+            warnings.push(format!(
+                "font.size must be a positive number (got {}); using the default",
+                self.font.size
+            ));
+            self.font.size = FontConfig::default().size;
+        }
+        warnings
+    }
+
     pub fn main_window(&self) -> ResolvedWindow {
         self.window.main.resolve(MAIN_WINDOW_DEFAULT)
     }
@@ -275,9 +309,12 @@ fn load_from(path: &Path) -> Result<(Config, Option<String>), String> {
     // 適用済みなので落とす (取得 YAML 側が持っていても再帰取得はしない)。
     doc.remove(CONFIG_OVERRIDE_COMMAND_KEY);
 
-    let config = serde_yaml::from_value::<Config>(Value::Mapping(doc))
+    let mut config = serde_yaml::from_value::<Config>(Value::Mapping(doc))
         .map_err(|e| format!("Invalid config in {}: {e}", path.display()))?;
-    Ok((config, warning))
+
+    let mut warnings: Vec<String> = warning.into_iter().collect();
+    warnings.extend(config.sanitize());
+    Ok((config, (!warnings.is_empty()).then(|| warnings.join("\n"))))
 }
 
 fn fetch_override(command: &str) -> Result<Mapping, String> {
@@ -387,8 +424,14 @@ fn run_override_command(command: &str, timeout: Duration) -> Result<String, Stri
     // パイプが埋まって子がブロックしないよう、待つ前から読み出しておく。
     let mut stdout_pipe = child.stdout.take();
     let mut stderr_pipe = child.stderr.take();
-    let stdout_reader = std::thread::spawn(move || read_all(&mut stdout_pipe));
-    let stderr_reader = std::thread::spawn(move || read_all(&mut stderr_pipe));
+    let (stdout_tx, stdout_rx) = std::sync::mpsc::channel();
+    let (stderr_tx, stderr_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = stdout_tx.send(read_all(&mut stdout_pipe));
+    });
+    std::thread::spawn(move || {
+        let _ = stderr_tx.send(read_all(&mut stderr_pipe));
+    });
 
     let deadline = Instant::now() + timeout;
     let status = loop {
@@ -411,8 +454,19 @@ fn run_override_command(command: &str, timeout: Duration) -> Result<String, Stri
         }
     };
 
-    let stdout = stdout_reader.join().unwrap_or_default();
-    let stderr = stderr_reader.join().unwrap_or_default();
+    // 読み切りも締め切りの内側で待つ。子が stdout を継いだ孫を残して先に終了すると、
+    // try_wait は抜けるのにパイプは開いたままで、待ち方を間違えると永久に返らない。
+    let Ok(stdout) = stdout_rx.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+    else {
+        return Err(format!(
+            "{CONFIG_OVERRIDE_COMMAND_KEY} timed out ({}s) while reading its output: {command} \
+             (a process it started may still be holding the pipe open)",
+            timeout.as_secs()
+        ));
+    };
+    let stderr = stderr_rx
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .unwrap_or_default();
 
     if !status.success() {
         return Err(format!(
@@ -643,6 +697,22 @@ mod tests {
     }
 
     #[test]
+    fn override_command_times_out_while_reading_output() {
+        // Arrange
+        // 親はすぐ終了するが、stdout を継いだ孫がパイプを掴んだまま残る。
+        let command = "/bin/sh -c 'sleep 30 & exit 0'";
+
+        // Act
+        let result = run_override_command(command, Duration::from_millis(200));
+
+        // Assert
+        assert!(
+            result.unwrap_err().contains("while reading its output"),
+            "should not block on the inherited pipe"
+        );
+    }
+
+    #[test]
     fn override_command_failure_reports_stderr() {
         // Arrange
         let command = "/bin/sh -c 'echo boom >&2; exit 3'";
@@ -726,6 +796,38 @@ mod tests {
         // Assert
         assert_eq!(config.font.size, 17.0);
         assert!(warning.expect("should warn").contains("exited with an error"));
+    }
+
+    #[test]
+    fn unusable_sizes_fall_back_with_a_warning() {
+        // Arrange
+        let doc = mapping("window:\n  small:\n    width: 0\n    height: -1\nfont:\n  size: 0\n");
+        let mut config: Config =
+            serde_yaml::from_value(Value::Mapping(doc)).expect("should parse");
+
+        // Act
+        let warnings = config.sanitize();
+
+        // Assert
+        assert_eq!(config.small_window().width, SMALL_WINDOW_DEFAULT.width);
+        assert_eq!(config.small_window().height, SMALL_WINDOW_DEFAULT.height);
+        assert_eq!(config.font.size, FontConfig::default().size);
+        assert_eq!(warnings.len(), 3, "{warnings:?}");
+    }
+
+    #[test]
+    fn usable_sizes_are_kept() {
+        // Arrange
+        let doc = mapping("window:\n  small:\n    width: 640\n");
+        let mut config: Config =
+            serde_yaml::from_value(Value::Mapping(doc)).expect("should parse");
+
+        // Act
+        let warnings = config.sanitize();
+
+        // Assert
+        assert_eq!(config.small_window().width, 640.0);
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     #[test]
