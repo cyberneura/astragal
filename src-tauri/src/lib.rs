@@ -682,16 +682,17 @@ fn monitor_with_cursor(app: &AppHandle) -> Option<tauri::Monitor> {
 /// アンカーの記録に使えるイベントから、発生時のカーソル位置と矩形を取る。
 /// どちらも同じ scale (トレイの載っているディスプレイのもの) で換算されている。
 ///
-/// `Leave` は含めない。Rect は Enter/Move と同じ値しか持たないので情報が増えない
-/// 一方、カーソルは既にアイコンから外れている。
+/// `Move` と `Leave` は含めない。Rect は `Enter` と同じ値しか持たず情報が増えない
+/// 一方、カーソルが動いている最中のイベントほど、処理までに別ディスプレイへ抜けて
+/// `tray_anchor` の scale 推定を外す確率が高い。`Leave` に至ってはカーソルが確実に
+/// アイコンから外れている。アイコン上に留まる `Enter` とクリックだけを使う。
 fn tray_icon_geometry(
     event: &TrayIconEvent,
 ) -> Option<(&tauri::PhysicalPosition<f64>, &tauri::Rect)> {
     match event {
         TrayIconEvent::Click { position, rect, .. }
         | TrayIconEvent::DoubleClick { position, rect, .. }
-        | TrayIconEvent::Enter { position, rect, .. }
-        | TrayIconEvent::Move { position, rect, .. } => Some((position, rect)),
+        | TrayIconEvent::Enter { position, rect, .. } => Some((position, rect)),
         _ => None,
     }
 }
@@ -701,6 +702,12 @@ fn tray_icon_geometry(
 /// `captured` はイベントが記録したカーソル位置 (物理値)。`scale` の推定が当たって
 /// いて、かつカーソルが動いていなければ、論理へ戻した値は現在位置と一致する。
 /// スケールの違うディスプレイへ抜けていた場合はここでずれるので弾ける。
+///
+/// 既知の限界: 移動先がちょうど `captured / scale` 付近だと、誤った scale でも
+/// 一致してしまう (scale 1 の物理 1612 を scale 2 で戻した 806 に、実カーソルが
+/// 来ている場合など)。トレイの scale を確定できる入力が `Rect` にも `position` にも
+/// 無いため (どちらも同じ未知の scale の物理値)、この重なりは検算では潰せない。
+/// 踏むと吹き出しが 1 回別ディスプレイに出るが、次にアイコンへ触れた時点で直る。
 fn cursor_is_stable(captured: (f64, f64), scale: f64, current: (f64, f64)) -> bool {
     (captured.0 / scale - current.0).abs() <= CURSOR_DRIFT_TOLERANCE
         && (captured.1 / scale - current.1).abs() <= CURSOR_DRIFT_TOLERANCE
