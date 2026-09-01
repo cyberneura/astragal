@@ -484,9 +484,13 @@ fn run_override_command(command: &str, timeout: Duration) -> Result<String, Stri
             timeout.as_secs()
         ));
     };
-    let stderr = stderr_rx
-        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-        .unwrap_or_default();
+    // stderr はエラーメッセージに載せるだけなので lossy で構わない。
+    let stderr = String::from_utf8_lossy(
+        &stderr_rx
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap_or_default(),
+    )
+    .into_owned();
 
     if !status.success() {
         return Err(format!(
@@ -495,6 +499,11 @@ fn run_override_command(command: &str, timeout: Duration) -> Result<String, Stri
             stderr.trim()
         ));
     }
+    // lossy に変換すると、壊れたバイトが U+FFFD になったまま YAML として
+    // 通ってしまい、化けた値が設定に入る。読めない出力は受け取らない。
+    let stdout = String::from_utf8(stdout).map_err(|_| {
+        format!("{CONFIG_OVERRIDE_COMMAND_KEY} produced output that is not valid UTF-8: {command}")
+    })?;
     if stdout.trim().is_empty() {
         return Err(format!(
             "{CONFIG_OVERRIDE_COMMAND_KEY} produced no output: {command}"
@@ -503,12 +512,12 @@ fn run_override_command(command: &str, timeout: Duration) -> Result<String, Stri
     Ok(stdout)
 }
 
-fn read_all<R: Read>(pipe: &mut Option<R>) -> String {
+fn read_all<R: Read>(pipe: &mut Option<R>) -> Vec<u8> {
     let mut buffer = Vec::new();
     if let Some(pipe) = pipe.as_mut() {
         let _ = pipe.read_to_end(&mut buffer);
     }
-    String::from_utf8_lossy(&buffer).into_owned()
+    buffer
 }
 
 fn supplemented_path() -> String {
@@ -714,6 +723,18 @@ mod tests {
 
         // Assert
         assert!(result.unwrap_err().contains("timed out"));
+    }
+
+    #[test]
+    fn non_utf8_override_output_is_rejected() {
+        // Arrange
+        let command = r"/usr/bin/printf 'font: \377'";
+
+        // Act
+        let result = run_override_command(command, Duration::from_secs(10));
+
+        // Assert
+        assert!(result.unwrap_err().contains("not valid UTF-8"));
     }
 
     #[test]
