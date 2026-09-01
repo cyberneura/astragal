@@ -53,6 +53,8 @@ const sessions = new Map<number, Session>();
 const pendingOutput = new Map<number, Uint8Array[]>();
 /** 同上。すぐ終了するコマンドだと、登録より先に終了が届く */
 const pendingExit = new Set<number>();
+/** 明示的に閉じたタブ。pty の後始末で飛んでくる終了イベントを捨てるために持つ */
+const closedSessions = new Set<number>();
 let ptyEvents: Promise<void> | null = null;
 
 // ── Encoding ─────────────────────────────────────────────────────────────────
@@ -152,9 +154,14 @@ async function registerPtyEvents(): Promise<void> {
     const session = sessions.get(payload.tab_id);
     if (session) {
       writeExitNotice(session);
-    } else {
-      pendingExit.add(payload.tab_id);
+      return;
     }
+    // 閉じたタブの後始末で飛んできたものは捨てる。積むと、id は再利用されないので
+    // タブを開閉するたびに pendingExit が増え続ける。
+    if (closedSessions.delete(payload.tab_id)) {
+      return;
+    }
+    pendingExit.add(payload.tab_id);
   });
 }
 
@@ -220,6 +227,7 @@ export async function closeSession(session: Session): Promise<void> {
   sessions.delete(session.id);
   pendingOutput.delete(session.id);
   pendingExit.delete(session.id);
+  closedSessions.add(session.id);
   session.terminal.dispose();
   await invoke("close_terminal", { tabId: session.id }).catch(console.error);
 }
