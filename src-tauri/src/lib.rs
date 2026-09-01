@@ -308,8 +308,29 @@ fn move_to_cursor_monitor(win: &WebviewWindow) -> Result<(), String> {
 
     let left = target.position().x as f64 / scale;
     let top = target.position().y as f64 / scale;
-    let x = left + (target.size().width as f64 / scale - win_width) / 2.0;
-    let y = top + (target.size().height as f64 / scale - win_height) / 2.0;
+    let mon_width = target.size().width as f64 / scale;
+    let mon_height = target.size().height as f64 / scale;
+
+    // 中央揃えの式は、ウインドウが移動先より大きいと負のオフセットになり、上端や
+    // 左端が画面外へ出る。タイトルバーが画面外に出ると掴めなくなり、手で戻せない。
+    let left_limit = left + SCREEN_EDGE_MARGIN;
+    let top_limit = top + MENU_BAR_HEIGHT;
+    let right_limit = left + mon_width - win_width - SCREEN_EDGE_MARGIN;
+    let bottom_limit = top + mon_height - win_height - SCREEN_EDGE_MARGIN;
+
+    let x = left + (mon_width - win_width) / 2.0;
+    let y = top + (mon_height - win_height) / 2.0;
+    // 入り切らない時は左上に寄せる (clamp は lo > hi でパニックするので分岐する)
+    let x = if right_limit >= left_limit {
+        x.clamp(left_limit, right_limit)
+    } else {
+        left_limit
+    };
+    let y = if bottom_limit >= top_limit {
+        y.clamp(top_limit, bottom_limit)
+    } else {
+        top_limit
+    };
 
     // 物理のまま渡すと tao が移動元ウインドウの scale で論理化するため、スケールの
     // 違うモニタへ動かす時にずれる。論理座標で渡して換算を挟ませない。
