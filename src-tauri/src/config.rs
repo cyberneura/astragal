@@ -79,8 +79,8 @@ const CONFIG_TEMPLATE: &str = r##"# Astragal config file
 
 # xterm theme. Only the keys you write here override the default theme.
 # theme:
-#   background: "#181825"
-#   foreground: "#cdd6f4"
+#   background: "#111111"
+#   foreground: "#e6e6e6"
 #   cursor: "#f5e0dc"
 
 # config_override_command runs a command whose stdout must be YAML, and merges
