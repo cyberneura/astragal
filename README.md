@@ -1,26 +1,27 @@
 # Astragal
 
-macOS 用の軽量ターミナルアプリ (Tauri 2.x + xterm.js)。
+A lightweight terminal app for macOS (Tauri 2.x + xterm.js).
 
-- タブ付きのメインウインドウ
-- メニューバー (トレイ) のアイコン直下に出る、吹き出し型の小さいターミナル
-  (アイコンを左クリック、右クリックでメニュー)
-- ウインドウの表示・非表示のグローバルホットキー
-- `~/.config/astragal/config.yaml` による設定
+- A main window with tabs
+- A small popover terminal that drops down from the menu bar (tray) icon
+  (left click the icon to open it, right click for the menu)
+- Global hotkeys to show and hide the windows
+- Configuration through `~/.config/astragal/config.yaml`
 
-## インストール
+## Install
 
 ```shell
 brew install --cask cyberneura/tap/astragal
 ```
 
-配布物は Developer ID で署名し公証済みの universal dmg (Intel / Apple Silicon)。
+Releases are universal `.dmg` files (Intel / Apple Silicon), signed with a Developer ID
+and notarized.
 
-## 設定
+## Configuration
 
-設定ファイルは `~/.config/astragal/config.yaml` (無ければ `config.yml`)。
-初回起動時に、全項目をコメントアウトしたテンプレートが自動生成される。
-書いた項目だけが既定値を上書きする。
+The config file is `~/.config/astragal/config.yaml` (or `config.yml` if that is the one
+present). On first launch a template is generated with every entry commented out.
+Only the entries you write override the defaults.
 
 ```yaml
 font:
@@ -56,89 +57,95 @@ theme: # xterm theme; only the keys you write are overridden
   foreground: "#e6e6e6"
 ```
 
-ホットキーの修飾子は `Control` / `Option` (`Alt`) / `Shift` / `Command` (`Cmd`, `Super`)。
-登録に失敗した場合は理由がターミナルに警告として出る。ただし macOS の
-`RegisterEventHotKey` はプロセス単位の登録なので、他のアプリやシステムが同じ
-組み合わせを握っている場合は**登録自体は成功し、キーが届かないだけで警告も出ない**。
-効かない時は組み合わせを変えること。
+Hotkey modifiers are `Control` / `Option` (`Alt`) / `Shift` / `Command` (`Cmd`, `Super`).
+If registration fails, the reason is printed in the terminal as a warning. Note that
+macOS `RegisterEventHotKey` registers per process, so when another app or the system
+already holds the same combination, **registration still succeeds — the key simply never
+arrives, and no warning is printed**. If a hotkey does nothing, try a different
+combination.
 
-`ASTRAGAL_CONFIG` 環境変数に設定ファイルのパスを渡すと、その内容で起動する。
+Set the `ASTRAGAL_CONFIG` environment variable to a config file path to start using that
+file instead.
 
 ### config_override_command
 
-標準出力に YAML を吐くコマンドを実行して、その結果を設定ファイルの上に
-再帰マージする。1Password 等から設定を引くための口。
+Runs a command that writes YAML to stdout and recursively merges the result on top of
+the config file. This is the hook for pulling settings out of 1Password and the like.
 
 ```yaml
 config_override_command: op read "op://development/astragal/config-yaml"
 ```
 
-- mapping 同士は再帰的にマージされ、スカラーとリストは丸ごと置き換わる。
-- **シェルを介さずに実行する**。コマンドは PATH 上にあるか絶対パスで書く
-  (PATH には `/opt/homebrew/bin` と `/usr/local/bin` が補われる)。
-- 60 秒でタイムアウトする。取得に失敗した場合はローカルの設定のまま起動し、
-  理由をターミナルに警告として表示する。
+- Mappings are merged recursively; scalars and lists are replaced wholesale.
+- **The command runs without a shell.** It has to be on `PATH` or written as an absolute
+  path (`/opt/homebrew/bin` and `/usr/local/bin` are appended to `PATH`).
+- It times out after 60 seconds. If the command fails, Astragal starts with the local
+  config and prints the reason in the terminal as a warning.
 
-## 開発
+## Development
 
 ```shell
 pnpm install
 pnpm tauri dev
 ```
 
-## ビルド
+## Build
 
 ```shell
 pnpm tauri build
 ```
 
-ビルドすると `src-tauri/target/release/bundle/macos/Astragal.app` ができる。
-`./astragal` はこのバンドルを起動する CLI ラッパー。
+The build produces `src-tauri/target/release/bundle/macos/Astragal.app`.
+`./astragal` is a CLI wrapper that launches that bundle.
 
-## リリース
+## Release
 
-リリースは `src-tauri/tauri.conf.json` の version で決まる。version を変えて main に
-載せれば `.github/workflows/release.yml` がビルドして GitHub Release を作り、変えなければ
-何度 push しても何も起きない (実行可否を決めるのは diff ではなく「その version が
-リリース済みか」)。
+A release is triggered by the version in `src-tauri/tauri.conf.json`. Change the version
+and land it on `main`, and `.github/workflows/release.yml` builds it and creates a
+GitHub Release; leave the version alone and nothing happens no matter how many times you
+push (what decides whether it runs is not the diff but whether that version has already
+been released).
 
 ```shell
-pnpm release            # patch を採番して main に push し、ビルドを watch する
+pnpm release            # bump the patch version, push to main, and watch the build
 pnpm release minor
 pnpm release major
 ```
 
-`scripts/release.sh` は main がクリーンで origin/main と一致している時だけ動く。
-ビルドは macOS ランナーで走り、Developer ID 署名と公証を経て `v<version>` タグの
-Release に universal dmg を上げる。署名用の Secret (`APPLE_CERTIFICATE` /
-`APPLE_CERTIFICATE_PASSWORD` / `APPLE_SIGNING_IDENTITY` / `APPLE_ID` /
-`APPLE_PASSWORD` / `APPLE_TEAM_ID`) はリポジトリに登録済みで、1 つでも欠けると
-ビルドの手前で失敗する (欠けたまま進むと公証なしの dmg が黙って公開されるため)。
+`scripts/release.sh` only runs when `main` is clean and matches `origin/main`. The build
+runs on a macOS runner, goes through Developer ID signing and notarization, and uploads
+the universal `.dmg` to the Release for the `v<version>` tag. The signing secrets
+(`APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` / `APPLE_SIGNING_IDENTITY` /
+`APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID`) are already registered on the
+repository, and the build fails up front if any one of them is missing (if it went ahead
+without them, an unnotarized `.dmg` would be published silently).
 
-Homebrew の cask (cyberneura/homebrew-tap) は最新リリースを毎時見て自分を更新する
-ので、`brew` に出るまで最大 1 時間遅れる。
+The Homebrew cask (cyberneura/homebrew-tap) updates itself hourly from the latest
+release, so it can take up to an hour for a new version to show up in `brew`.
 
-## テスト
+## Tests
 
 ```shell
 cd src-tauri && cargo test
 pnpm exec tsc --noEmit
 ```
 
-## アイコン
+## Icons
 
-マスターは `resources/app-icons/` にあり、`generate.py` (要 `rsvg-convert`) で
-SVG から起こす。用途ごとに余白と色の扱いが違うので 4 枚に分かれている。
+The masters live in `resources/app-icons/` and are rendered from SVG by `generate.py`
+(which needs `rsvg-convert`). There are four of them because padding and color are
+handled differently per use.
 
-| ファイル | 用途 |
+| File | Use |
 |---|---|
-| `astragal-mac-icon.png` | macOS アプリアイコン。背景に 10% の余白 |
-| `astragal-favicon.png` | Windows / Web。余白なし |
-| `tray-mac.png` | メニューバー。単色 + 透過 (template 画像) |
-| `tray-win.png` | Windows トレイ。カラー |
+| `astragal-mac-icon.png` | macOS app icon. 10% padding around the artwork |
+| `astragal-favicon.png` | Windows / web. No padding |
+| `tray-mac.png` | Menu bar. Monochrome + transparency (a template image) |
+| `tray-win.png` | Windows tray. Full color |
 
-`src-tauri/icons/` への反映は下記の順で行う。`pnpm tauri icon` は
-`src-tauri/icons/` を毎回まるごと上書きするので、単発で流すと mac の余白が黙って消える。
+Apply them to `src-tauri/icons/` in the order below. `pnpm tauri icon` overwrites the
+whole of `src-tauri/icons/` every time, so running it once on its own silently drops the
+padding on the macOS icon.
 
 ```shell
 python3 resources/app-icons/generate.py
