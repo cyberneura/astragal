@@ -81,7 +81,7 @@ const CONFIG_TEMPLATE: &str = r##"# Astragal config file
 # theme:
 #   background: "#111111"
 #   foreground: "#e6e6e6"
-#   cursor: "#f5e0dc"
+#   cursor: "#ffffff"
 
 # config_override_command runs a command whose stdout must be YAML, and merges
 # that YAML over this file. Mappings are merged recursively; scalars and lists
