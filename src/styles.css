@@ -17,12 +17,12 @@
   /* ターミナルの実際の背景色。起動時に JS がテーマの値で上書きする。
      余りの数ピクセルやスクロールバーの溝が別の色で浮かないよう、
      ウインドウ全体をこの色で塗る */
-  --terminal-background: #181825;
+  --terminal-background: #111111;
 
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   font-size: 13px;
   line-height: 1.4;
-  color: #cdd6f4;
+  color: #e6e6e6;
   background-color: var(--terminal-background);
   /* これが無いとネイティブのスクロールバーが明色で描かれ、
      右端に白い帯が出る (scrollbar-width 指定時は ::-webkit-scrollbar-* が効かない) */
@@ -55,7 +55,7 @@ html, body {
   align-items: center;
   height: 34px;
   background: var(--terminal-background);
-  border-bottom: 1px solid #313244;
+  border-bottom: 1px solid #2a2a2a;
   flex-shrink: 0;
   padding: 0 8px 0 0;
 }
@@ -72,7 +72,7 @@ html, body {
   align-items: center;
   align-self: stretch;
   padding-right: 12px;
-  color: #a6adc8;
+  color: #9a9a9a;
   font-size: 12px;
   white-space: nowrap;
   flex-shrink: 0;
@@ -99,10 +99,10 @@ html, body {
   gap: 6px;
   height: 24px;
   padding: 0 12px;
-  background: #313244;
+  background: #2a2a2a;
   border: none;
   border-radius: 6px;
-  color: #a6adc8;
+  color: #9a9a9a;
   font-size: 11px;
   cursor: pointer;
   white-space: nowrap;
@@ -111,12 +111,12 @@ html, body {
 }
 
 .tab-button:hover {
-  background: #45475a;
+  background: #3a3a3a;
 }
 
 .tab-button.active {
-  background: #45475a;
-  color: #cdd6f4;
+  background: #3a3a3a;
+  color: #e6e6e6;
 }
 
 .tab-close {
@@ -128,7 +128,7 @@ html, body {
   border-radius: 50%;
   font-size: 11px;
   line-height: 1;
-  color: #a6adc8;
+  color: #9a9a9a;
   opacity: 0.6;
   transition: opacity 0.1s;
 }
@@ -138,8 +138,8 @@ html, body {
 }
 
 .tab-close:hover {
-  background: #585b70;
-  color: #cdd6f4;
+  background: #4d4d4d;
+  color: #e6e6e6;
 }
 
 #new-tab {
@@ -151,7 +151,7 @@ html, body {
   background: transparent;
   border: none;
   border-radius: 6px;
-  color: #a6adc8;
+  color: #9a9a9a;
   font-size: 16px;
   cursor: pointer;
   flex-shrink: 0;
@@ -160,7 +160,7 @@ html, body {
 }
 
 #new-tab:hover {
-  background: #45475a;
+  background: #3a3a3a;
 }
 
 /* ウインドウを掴む領域。ドラッグ判定はイベントの target 自身に
@@ -199,7 +199,7 @@ html, body {
 .terminal-container .xterm-viewport {
   background-color: var(--terminal-background);
   scrollbar-width: thin;
-  scrollbar-color: #45475a var(--terminal-background);
+  scrollbar-color: #3a3a3a var(--terminal-background);
 }
 
 .terminal-container .xterm-viewport::-webkit-scrollbar {
@@ -211,19 +211,19 @@ html, body {
 }
 
 .terminal-container .xterm-viewport::-webkit-scrollbar-thumb {
-  background: #45475a;
+  background: #3a3a3a;
   border-radius: 4px;
 }
 
 .terminal-container .xterm-viewport::-webkit-scrollbar-thumb:hover {
-  background: #585b70;
+  background: #4d4d4d;
 }
 
 /* ── Startup Error ────────────────────────────────────────────────────────── */
 
 .startup-error {
   padding: 16px;
-  color: #f38ba8;
+  color: #ff5f5a;
   font-family: ui-monospace, Menlo, monospace;
   font-size: 12px;
   white-space: pre-wrap;
@@ -235,5 +235,5 @@ html, body {
 /* ── Selection ────────────────────────────────────────────────────────────── */
 
 ::selection {
-  background: #585b70;
+  background: #3a4a6b;
 }

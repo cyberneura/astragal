@@ -52,8 +52,8 @@ window:
     hide_on_blur: true
 
 theme: # xterm theme; only the keys you write are overridden
-  background: "#181825"
-  foreground: "#cdd6f4"
+  background: "#111111"
+  foreground: "#e6e6e6"
 ```
 
 ホットキーの修飾子は `Control` / `Option` (`Alt`) / `Shift` / `Command` (`Cmd`, `Super`)。

@@ -24,26 +24,27 @@ export interface Session {
 
 const DEFAULT_THEME: ITheme = {
   // タブバーと同じ色。ウインドウ全体をこの色で塗って継ぎ目を無くす
-  background: "#181825",
-  foreground: "#cdd6f4",
-  cursor: "#f5e0dc",
-  selectionBackground: "#585b70",
-  black: "#45475a",
-  red: "#f38ba8",
-  green: "#a6e3a1",
-  yellow: "#f9e2af",
-  blue: "#89b4fa",
-  magenta: "#f5c2e7",
-  cyan: "#94e2d5",
-  white: "#bac2de",
-  brightBlack: "#585b70",
-  brightRed: "#f38ba8",
-  brightGreen: "#a6e3a1",
-  brightYellow: "#f9e2af",
-  brightBlue: "#89b4fa",
-  brightMagenta: "#f5c2e7",
-  brightCyan: "#94e2d5",
-  brightWhite: "#a6adc8",
+  background: "#111111",
+  foreground: "#e6e6e6",
+  cursor: "#ffffff",
+  selectionBackground: "#3a4a6b",
+  // black は罫線やコメントに使われる。#111 の上で潰れない程度に浮かせる
+  black: "#4d4d4d",
+  red: "#ff5f5a",
+  green: "#38e07b",
+  yellow: "#ffd23f",
+  blue: "#4fa8ff",
+  magenta: "#ff6ac1",
+  cyan: "#34e2e2",
+  white: "#d8d8d8",
+  brightBlack: "#6f6f6f",
+  brightRed: "#ff8a85",
+  brightGreen: "#6bff9e",
+  brightYellow: "#ffe066",
+  brightBlue: "#7cc4ff",
+  brightMagenta: "#ff96d8",
+  brightCyan: "#66f4f4",
+  brightWhite: "#ffffff",
 };
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -110,7 +111,7 @@ export function showStartupError(container: HTMLElement, error: unknown): void {
 
 /** 実際に描画されるターミナルの背景色 */
 function terminalBackground(config: AppConfig): string {
-  return config.theme.background ?? DEFAULT_THEME.background ?? "#181825";
+  return config.theme.background ?? DEFAULT_THEME.background ?? "#111111";
 }
 
 /**
