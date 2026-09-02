@@ -31,6 +31,14 @@ cd src-tauri && cargo clippy --all-targets
 pnpm exec tsc --noEmit
 ```
 
+## バージョンとリリース
+
+version の正本は `src-tauri/tauri.conf.json` と `package.json` の 2 ファイルだけ
+(`scripts/release.sh` が触るのと同じ)。`Cargo.toml` の version はコードから参照されて
+おらず、上げない。version を変えて main に載せると `release.yml` がビルド・署名・公証して
+GitHub Release を公開するので、**PR に version bump を含めるとマージがそのままリリースになる**。
+手順は `README.md` の「リリース」。
+
 ## macOS 固有の注意
 
 ### 座標の単位系
