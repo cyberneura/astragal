@@ -224,7 +224,8 @@ html, body {
 
 /* ── Startup Error ────────────────────────────────────────────────────────── */
 
-.startup-error {
+.startup-error,
+.empty-notice {
   padding: 16px;
   color: #ff5f5a;
   font-family: ui-monospace, Menlo, monospace;
@@ -233,6 +234,11 @@ html, body {
   /* 原因をコピーして報告できるように、全体の user-select: none を解除する */
   user-select: text;
   -webkit-user-select: text;
+}
+
+/* シェルが終了してタブが無くなっただけで、異常ではない */
+.empty-notice {
+  color: #9a9a9a;
 }
 
 /* ── Selection ────────────────────────────────────────────────────────────── */
