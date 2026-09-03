@@ -10,6 +10,7 @@ import { WebLinksAddon } from "xterm-addon-web-links";
 
 export interface AppConfig {
   font: { family: string; size: number };
+  terminal: { close_on_exit: boolean };
   theme: Record<string, string>;
   shell_name: string;
   config_path: string;
@@ -20,6 +21,11 @@ export interface Session {
   id: number;
   terminal: Terminal;
   fitAddon: FitAddon;
+  closeOnExit: boolean;
+  /** このタブで一度でもユーザーの入力を受けたか。終了時に閉じるかの判定に使う */
+  userInteracted: boolean;
+  /** シェルが終了した時に呼ぶ。setSessionExitHandler で登録する */
+  onExit?: () => void;
 }
 
 const DEFAULT_THEME: ITheme = {
@@ -161,7 +167,7 @@ async function registerPtyEvents(): Promise<void> {
   await self.listen<{ tab_id: number }>("terminal-exit", ({ payload }) => {
     const session = sessions.get(payload.tab_id);
     if (session) {
-      writeExitNotice(session);
+      handleExit(session);
       return;
     }
     if (closedSessions.has(payload.tab_id)) {
@@ -203,7 +209,13 @@ export async function startSession(
   terminal.open(element);
 
   const id = await invoke<number>("create_terminal");
-  const session: Session = { id, terminal, fitAddon };
+  const session: Session = {
+    id,
+    terminal,
+    fitAddon,
+    closeOnExit: config.terminal.close_on_exit,
+    userInteracted: false,
+  };
   sessions.set(id, session);
 
   const queued = pendingOutput.get(id);
@@ -213,11 +225,20 @@ export async function startSession(
   }
   // 出力を流し切ってから終了を出す (順序が入れ替わらないように)
   if (pendingExit.delete(id)) {
-    writeExitNotice(session);
+    handleExit(session);
   }
 
   terminal.onData((data) => writeStdin(id, new TextEncoder().encode(data)));
   terminal.onBinary((data) => writeStdin(id, binaryStringToBytes(data)));
+
+  // 「ユーザーが使ったタブか」を覚える。onData では代用できない。rc ファイルが投げる
+  // 端末問い合わせ (\x1b[6n 等) への自動応答でも発火してしまうため。
+  terminal.onKey(() => {
+    session.userInteracted = true;
+  });
+  terminal.textarea?.addEventListener("paste", () => {
+    session.userInteracted = true;
+  });
   terminal.onResize(({ cols, rows }) => {
     invoke("resize_terminal", { tabId: id, rows, cols }).catch(console.error);
   });
@@ -225,8 +246,42 @@ export async function startSession(
   return session;
 }
 
-function writeExitNotice(session: Session): void {
-  session.terminal.write("\r\n\x1b[33m[Process exited]\x1b[0m\r\n");
+/**
+ * シェルが終了した時の分岐。
+ *
+ * 一度も入力を受けていないタブは、close_on_exit が有効でも閉じない。shell.command /
+ * shell.args の設定を誤るとシェルは起動して即終了するが、タブごと消すとシェルが出した
+ * エラーも [Process exited] も残らず、空のウインドウだけになって GUI からは設定ミスを
+ * 診断できない。判定を経過時間ではなく入力の有無にしているのは、初期化に時間のかかる
+ * シェルが失敗した場合も拾うため。exit や Ctrl+D で閉じる動線は入力を伴うので、
+ * この条件には掛からない。
+ */
+function handleExit(session: Session): void {
+  if (!session.closeOnExit || !session.userInteracted) {
+    writeExitNotice(session, session.closeOnExit);
+    return;
+  }
+  session.onExit?.();
+}
+
+function writeExitNotice(session: Session, keptOpen: boolean): void {
+  // 「入力を受けていないから残した」とは書かない。検知しているのは onKey と paste で、
+  // IME 変換やマウスレポートは onData にしか流れず、拾えていないため。
+  const notice = keptOpen
+    ? "[Process exited; keeping this tab open so the output stays readable]"
+    : "[Process exited]";
+  session.terminal.write(`\r\n\x1b[33m${notice}\x1b[0m\r\n`);
+}
+
+/**
+ * シェルが終了した時の後始末を登録する。
+ *
+ * 登録より先に終了が届くことはある (すぐ終わるコマンド) が、その時点ではまだ誰も入力
+ * できていないので handleExit はタブを残す枝に入り、ここで拾い直す必要はない。
+ * 閉じる条件を入力の有無以外に変えるなら、取りこぼしの回収がここに要る。
+ */
+export function setSessionExitHandler(session: Session, onExit: () => void): void {
+  session.onExit = onExit;
 }
 
 export async function closeSession(session: Session): Promise<void> {

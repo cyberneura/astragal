@@ -36,6 +36,13 @@ shell:
   env:
     LANG: ja_JP.UTF-8
 
+terminal:
+  # Close the tab when its shell process exits. Set to false to keep the tab
+  # open, so the output stays on screen and can be copied.
+  # A shell that exits before you type anything in that tab keeps its tab either
+  # way, so a shell that fails to start stays readable.
+  close_on_exit: true
+
 # Global hotkeys. Set an empty string to disable one.
 hotkeys:
   window: "Control+Option+Command+A"

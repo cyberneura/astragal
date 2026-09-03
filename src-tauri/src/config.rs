@@ -59,6 +59,13 @@ const CONFIG_TEMPLATE: &str = r##"# Astragal config file
 #   env:
 #     LANG: ja_JP.UTF-8
 
+# terminal:
+#   # Close the tab when its shell process exits. Set to false to keep the tab
+#   # open, so the output stays on screen and can be copied.
+#   # A shell that exits before you type anything in that tab keeps its tab
+#   # either way, so a shell that fails to start stays readable.
+#   close_on_exit: true
+
 # Global hotkeys. Set an empty string to disable one.
 # Modifiers: Control / Option (Alt) / Shift / Command (Cmd, Super).
 # hotkeys:
@@ -98,10 +105,27 @@ const CONFIG_TEMPLATE: &str = r##"# Astragal config file
 pub struct Config {
     pub font: FontConfig,
     pub shell: ShellConfig,
+    pub terminal: TerminalConfig,
     pub window: WindowsConfig,
     pub hotkeys: HotkeyConfig,
     /// xterm の theme にそのまま渡す。既定テーマの上にキー単位で被せる。
     pub theme: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TerminalConfig {
+    /// シェルが終了した時にタブを閉じるか。false にすると、終了した旨だけ書いて
+    /// タブを残す (出力をコピーしたい時のため)。
+    pub close_on_exit: bool,
+}
+
+impl Default for TerminalConfig {
+    fn default() -> Self {
+        Self {
+            close_on_exit: true,
+        }
+    }
 }
 
 /// グローバルホットキー。空文字・null にすると登録しない。
@@ -638,6 +662,22 @@ mod tests {
         assert_eq!(config.font.size, 18.0);
         assert_eq!(config.font.family, DEFAULT_FONT_FAMILY);
         assert_eq!(config.shell.args, vec!["-l".to_string()]);
+    }
+
+    #[test]
+    fn tabs_close_on_exit_unless_turned_off() {
+        // Arrange
+        let default_doc = mapping("font:\n  size: 18\n");
+        let doc = mapping("terminal:\n  close_on_exit: false\n");
+
+        // Act
+        let default_config: Config =
+            serde_yaml::from_value(Value::Mapping(default_doc)).expect("should parse");
+        let config: Config = serde_yaml::from_value(Value::Mapping(doc)).expect("should parse");
+
+        // Assert
+        assert!(default_config.terminal.close_on_exit);
+        assert!(!config.terminal.close_on_exit);
     }
 
     #[test]

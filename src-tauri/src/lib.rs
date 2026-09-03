@@ -63,6 +63,7 @@ const CURSOR_DRIFT_TOLERANCE: f64 = 8.0;
 #[derive(Serialize)]
 struct FrontendConfig {
     font: config::FontConfig,
+    terminal: config::TerminalConfig,
     theme: BTreeMap<String, String>,
     /// タブのラベルに使う、起動するコマンドのファイル名
     shell_name: String,
@@ -83,6 +84,7 @@ fn get_config(app: AppHandle) -> FrontendConfig {
 
     FrontendConfig {
         font: loaded.config.font.clone(),
+        terminal: loaded.config.terminal.clone(),
         theme: loaded.config.theme.clone(),
         shell_name: shell
             .file_name()
