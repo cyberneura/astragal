@@ -6,6 +6,8 @@ A lightweight terminal app for macOS (Tauri 2.x + xterm.js).
 - A small popover terminal that drops down from the menu bar (tray) icon
   (left click the icon to open it, right click for the menu)
 - Global hotkeys to show and hide the windows
+- Cmd+click a URL to open it in the default browser. Holding Cmd underlines the URL
+  under the pointer, and a URL that soft-wraps across lines opens in full
 - Configuration through `~/.config/astragal/config.yaml`
 
 ## Install
