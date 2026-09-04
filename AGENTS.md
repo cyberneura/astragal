@@ -22,6 +22,7 @@ public リポジトリなので、**README・UI 文字列・エラーメッセ�
 | `src-tauri/src/lib.rs` | pty セッション、ウインドウ配置、トレイ、ホットキー |
 | `src-tauri/src/config.rs` | `~/.config/astragal/config.yaml` の読み込みとマージ |
 | `src/terminal.ts` | xterm の生成とテーマ適用 |
+| `src/links.ts` | URL の検出と Cmd+クリックでの起動 |
 | `src/tabs.ts` | タブ管理と Cmd 系キーバインド |
 | `src/main.ts` / `src/small.ts` | メインウインドウ / 吹き出しの入口 |
 | `resources/app-icons/` | アイコンのマスター素材と `generate.py` |

@@ -1,10 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Terminal } from "xterm";
-import type { ITheme } from "xterm";
+import type { IDisposable, ITheme } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { Unicode11Addon } from "xterm-addon-unicode11";
-import { WebLinksAddon } from "xterm-addon-web-links";
+import { enableLinks } from "./links";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -21,6 +21,8 @@ export interface Session {
   id: number;
   terminal: Terminal;
   fitAddon: FitAddon;
+  /** URL の Cmd+クリックの登録。タブを閉じる時に解除する */
+  links: IDisposable;
   closeOnExit: boolean;
   /** このタブで一度でもユーザーの入力を受けたか。終了時に閉じるかの判定に使う */
   userInteracted: boolean;
@@ -197,7 +199,7 @@ export async function startSession(
 
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
-  terminal.loadAddon(new WebLinksAddon());
+  const links = enableLinks(terminal);
 
   // xterm's built-in width table is Unicode 6, where emoji are one cell wide. The glyph the font
   // draws is two cells wide, so it gets clipped down the middle and everything after it on the
@@ -213,6 +215,7 @@ export async function startSession(
     id,
     terminal,
     fitAddon,
+    links,
     closeOnExit: config.terminal.close_on_exit,
     userInteracted: false,
   };
@@ -289,6 +292,7 @@ export async function closeSession(session: Session): Promise<void> {
   pendingOutput.delete(session.id);
   pendingExit.delete(session.id);
   closedSessions.add(session.id);
+  session.links.dispose();
   session.terminal.dispose();
   await invoke("close_terminal", { tabId: session.id }).catch(console.error);
 }
