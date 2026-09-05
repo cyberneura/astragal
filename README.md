@@ -4,7 +4,8 @@ A lightweight terminal app for macOS (Tauri 2.x + xterm.js).
 
 - A main window with tabs
 - A small popover terminal that drops down from the menu bar (tray) icon
-  (left click the icon to open it, right click for the menu)
+  (left click the icon to open it, right click for the menu, which also has an About
+  entry with the version and links)
 - Global hotkeys to show and hide the windows
 - Cmd+click a URL to open it in the default browser. Holding Cmd underlines the URL
   under the pointer, and a URL that soft-wraps across lines opens in full

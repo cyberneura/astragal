@@ -17,6 +17,7 @@ export default defineConfig(() => ({
       input: {
         index: "index.html",
         small: "small.html",
+        about: "about.html",
       },
     },
   },
