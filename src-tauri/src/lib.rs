@@ -543,6 +543,80 @@ fn show_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Serialize)]
+struct AppInfo {
+    name: String,
+    version: String,
+    description: &'static str,
+    repository_url: &'static str,
+    vendor_name: &'static str,
+    vendor_url: &'static str,
+}
+
+/// About ウインドウに出す情報。version は tauri.conf.json のものが入る。
+#[tauri::command]
+fn app_info(app: AppHandle) -> AppInfo {
+    let info = app.package_info();
+    AppInfo {
+        name: info.name.clone(),
+        version: info.version.to_string(),
+        description: "A compact, lightweight terminal app for macOS. \
+            It lives in the menu bar, with a tabbed main window and a small popover \
+            terminal that drops down from the tray icon.",
+        repository_url: "https://github.com/cyberneura/astragal",
+        vendor_name: "Cyberneura",
+        vendor_url: "https://www.cyberneura.com",
+    }
+}
+
+/// About ウインドウを出す。閉じると破棄されるので、無ければ作り直す。
+///
+/// 常駐ウインドウと違って hide_on_close にしないのは、滅多に開かないものを
+/// 起動時から抱えておく理由が無いため。
+///
+/// 新規に作る時は非表示のまま作り、front が描画を終えて `about_window_ready` を
+/// 呼んでから出す。webview の初期背景が白なので、先に出すと一瞬白く光る。
+fn show_about_window(app: &AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("about") {
+        return present_about_window(&win);
+    }
+    tauri::WebviewWindowBuilder::new(
+        app,
+        "about",
+        tauri::WebviewUrl::App("about.html".into()),
+    )
+    .title("About Astragal")
+    .inner_size(380.0, 430.0)
+    .resizable(false)
+    .minimizable(false)
+    .maximizable(false)
+    // 中身が常にダークなので、タイトルバーも OS の設定に関係なくダークに揃える
+    .theme(Some(tauri::Theme::Dark))
+    // ページが読み込まれるまでの間に NSWindow の地の色が見えないようにする。
+    // styles.css の --terminal-background と同じ色
+    .background_color(tauri::window::Color(0x11, 0x11, 0x11, 0xff))
+    .visible(false)
+    .center()
+    .build()
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn present_about_window(win: &WebviewWindow) -> Result<(), String> {
+    let _ = move_to_cursor_monitor(win);
+    win.show().map_err(|e| e.to_string())?;
+    win.set_focus().map_err(|e| e.to_string())
+}
+
+/// About 画面の描画が終わった合図。ここで初めてウインドウを出す。
+#[tauri::command]
+fn about_window_ready(app: AppHandle) -> Result<(), String> {
+    match app.get_webview_window("about") {
+        Some(win) => present_about_window(&win),
+        None => Ok(()),
+    }
+}
+
 /// メニューバー用。template 画像はアルファしか使われないので単色 + 透過の専用素材。
 /// アプリアイコンを流用すると階調が落ちて黒い塊になる。
 #[cfg(target_os = "macos")]
@@ -560,12 +634,14 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let show_small = MenuItemBuilder::with_id("show_small", "Show Small Window").build(app)?;
     let toggle = MenuItemBuilder::with_id("toggle", "Show Window").build(app)?;
     let separator = tauri::menu::PredefinedMenuItem::separator(app)?;
+    let about = MenuItemBuilder::with_id("about", "About Astragal").build(app)?;
     let close = MenuItemBuilder::with_id("close", "Close").build(app)?;
 
     let menu = MenuBuilder::new(app)
         .item(&show_small)
         .item(&toggle)
         .item(&separator)
+        .item(&about)
         .item(&close)
         .build()?;
 
@@ -582,6 +658,11 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             }
             "toggle" => {
                 let _ = toggle_window(app.clone());
+            }
+            "about" => {
+                if let Err(e) = show_about_window(app) {
+                    eprintln!("astragal: failed to show the about window: {e}");
+                }
             }
             "close" => {
                 app.exit(0);
@@ -911,6 +992,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_config,
+            app_info,
+            about_window_ready,
             request_small_anchor,
             create_terminal,
             write_stdin,
