@@ -25,10 +25,12 @@ public リポジトリなので、**README・UI 文字列・エラーメッセ�
 | `src/links.ts` | URL の検出と Cmd+クリックでの起動 |
 | `src/tabs.ts` | タブ管理と Cmd 系キーバインド |
 | `src/main.ts` / `src/small.ts` | メインウインドウ / 吹き出しの入口 |
+| `src/about.ts` | トレイメニューの About から開くウインドウ |
 | `resources/app-icons/` | アイコンのマスター素材と `generate.py` |
 
-ウインドウは 2 つある。`main` (タブ付き) と `small` (メニューバーアイコン直下に出る
-吹き出し)。挙動が違うので、片方だけ直して済ませないこと。
+常駐ウインドウは 2 つある。`main` (タブ付き) と `small` (メニューバーアイコン直下に出る
+吹き出し)。挙動が違うので、片方だけ直して済ませないこと。`about` は開くたびに作り、
+閉じると破棄される。
 
 ## コマンド
 
@@ -75,6 +77,13 @@ GitHub Release を公開するので、**PR に version bump を含めるとマ�
 前者は dev 実行 (バンドルされない素のバイナリ)、後者はバンドル版の起動直後の
 ちらつき防止。**アプリメニューは描画されなくなるが Cmd+C / Cmd+V は効く**
 (`NSApp` の main menu オブジェクトは残り `performKeyEquivalent:` が辿るため)。
+
+### 非表示ウインドウで requestAnimationFrame を待たない
+
+webview の初期背景は白なので、新しいウインドウは `visible(false)` で作り、front が DOM を
+埋めてからコマンドで show している (`about`)。この「show してもらう合図」を
+`requestAnimationFrame` の中で送ると永遠に出ない。WebKit は見えていないページの
+フレームを止めるため。DOM 更新の直後にそのまま invoke する。
 
 ### アイコン
 
