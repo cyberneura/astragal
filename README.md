@@ -169,3 +169,13 @@ rm -rf "$TMP" src-tauri/icons/android src-tauri/icons/ios
 
 cp resources/app-icons/tray-mac.png resources/app-icons/tray-win.png src-tauri/icons/
 ```
+
+To see which resolutions the generated `.icns` actually holds — useful when an icon
+looks soft somewhere and you need to tell whether the bundle is at fault — run:
+
+```shell
+python3 resources/app-icons/inspect_icns.py
+```
+
+It needs nothing but the standard library, and exits non-zero if any of the sizes
+macOS asks for (16 through 1024) is missing.

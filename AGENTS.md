@@ -26,7 +26,7 @@ public リポジトリなので、**README・UI 文字列・エラーメッセ�
 | `src/tabs.ts` | タブ管理と Cmd 系キーバインド |
 | `src/main.ts` / `src/small.ts` | メインウインドウ / 吹き出しの入口 |
 | `src/about.ts` | トレイメニューの About から開くウインドウ |
-| `resources/app-icons/` | アイコンのマスター素材と `generate.py` |
+| `resources/app-icons/` | アイコンのマスター素材と `generate.py` / `inspect_icns.py` |
 
 常駐ウインドウは 2 つある。`main` (タブ付き) と `small` (メニューバーアイコン直下に出る
 吹き出し)。挙動が違うので、片方だけ直して済ませないこと。`about` は開くたびに作り、
@@ -90,6 +90,18 @@ webview の初期背景は白なので、新しいウインドウは `visible(fa
 用途ごとに余白と色の扱いが違う。手順は `README.md` の「アイコン」を参照。
 `pnpm tauri icon` は `src-tauri/icons/` を毎回まるごと上書きするので、単発で流すと
 mac 用の余白が黙って消える。
+
+`src-tauri/icons/icon.icns` の中身は `resources/app-icons/inspect_icns.py` で一覧できる
+(標準ライブラリのみ。抜けがあれば exit 1)。**アイコンが低解像度に見えるという報告が来たら、
+まずこれを流して原因がこちら側かを切り分ける。**
+
+現在の `icon.icns` は 16 / 32 / 64 / 128 / 256 / 512 / 1024px をすべて持ち、1024px の
+エントリは `resources/app-icons/astragal-mac-icon.png` (1024px のマスター) と一致する
+(CYBERNEURA-DEV-686 で検証)。**つまり他アプリのダイアログで Astragal のアイコンが
+ぼやける場合、原因はバンドルの資産ではなく呼び出し側**で、macOS から小さいサイズで
+アイコンを受け取って拡大している。Electron 製アプリで起きやすい (`app.getFileIcon` は
+macOS では最大 32x32 しか返さない)。同じダイアログを Terminal.app から出して、
+そちらも同じようにぼやけるかで確かめられる。
 
 ## 依存ライブラリの挙動を調べる時
 
