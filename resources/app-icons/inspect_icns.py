@@ -36,7 +36,7 @@ SLOTS = {
     "ic14": (512, "256x256@2x"),
 }
 # 圧縮された RGB / ARGB で入る型。寸法をヘッダに持たないので、中身からは確かめられず
-# 型が名乗るサイズを信じるしかない。これ以外の型で PNG が読めなければ壊れている。
+# 型が名乗るサイズを信じるしかない。これ以外の型は PNG か JPEG 2000 で入る。
 HEADERLESS = {"is32", "il32", "ih32", "it32", "ic04", "ic05"}
 # 画像ではない補助チャンクなので、解像度の集計からは外す。
 NON_IMAGE = {"s8mk", "l8mk", "h8mk", "t8mk", "TOC ", "icnV", "info", "name", "sbtp", "slct"}
@@ -76,21 +76,63 @@ def png_size(body):
     return struct.unpack(">II", body[16:24])
 
 
+def _jp2_boxes(data):
+    """JP2 のボックス列を (型, 中身) で返す。長さ 0 / 1 は末尾までの意味。"""
+    offset = 0
+    while offset + 8 <= len(data):
+        length = struct.unpack(">I", data[offset : offset + 4])[0]
+        boxtype = data[offset + 4 : offset + 8]
+        if length == 0:
+            length = len(data) - offset
+        elif length == 1:
+            # 64bit 長。アイコン程度の大きさでは出てこないので追わない。
+            return
+        if length < 8 or offset + length > len(data):
+            return
+        yield boxtype, data[offset + 8 : offset + length]
+        offset += length
+
+
+def jp2_size(body):
+    """JPEG 2000 の寸法。icns の現代的なスロットは PNG か JPEG 2000 で入る。"""
+    if body[:12] == b"\x00\x00\x00\x0cjP  \r\n\x87\n":
+        for boxtype, content in _jp2_boxes(body):
+            if boxtype != b"jp2h":
+                continue
+            for subtype, subcontent in _jp2_boxes(content):
+                # ihdr は高さが先。PNG と順番が逆なので入れ替えて返す。
+                if subtype == b"ihdr" and len(subcontent) >= 8:
+                    height, width = struct.unpack(">II", subcontent[:8])
+                    return width, height
+        return None
+    # 生のコードストリーム (SOC + SIZ)。Xsiz/Ysiz から原点を引いた分が寸法。
+    if body[:4] == b"\xff\x4f\xff\x51" and len(body) >= 24:
+        xsiz, ysiz, xosiz, yosiz = struct.unpack(">IIII", body[8:24])
+        return xsiz - xosiz, ysiz - yosiz
+    return None
+
+
+def image_size(body):
+    size = png_size(body)
+    # (0, 0) を返す壊れた PNG を JPEG 2000 として読み直さないよう、明示的に判定する。
+    return size if size is not None else jp2_size(body)
+
+
 def describe(ostype, body):
     """(表示用の文字列, このエントリが供給するピクセル数 or None) を返す。"""
     slot = SLOTS.get(ostype)
-    actual = png_size(body)
+    actual = image_size(body)
     if slot is None:
-        return (f"{actual[0]}x{actual[1]} png" if actual else "unknown type"), None
+        return (f"{actual[0]}x{actual[1]}" if actual else "unknown type"), None
     expected, label = slot
     if actual is None:
-        # PNG で入るはずの型が PNG として読めないなら、そのサイズは当てにできない。
+        # 寸法を持つはずの型が読めないなら、そのサイズは当てにできない。
         if ostype in HEADERLESS:
             return f"{label:<20} headerless", expected
-        return f"{label:<20} NOT A PNG", None
+        return f"{label:<20} UNREADABLE", None
     if actual != (expected, expected):
-        return f"{label:<20} {actual[0]}x{actual[1]} png MISMATCH", None
-    return f"{label:<20} {actual[0]}x{actual[1]} png", expected
+        return f"{label:<20} {actual[0]}x{actual[1]} MISMATCH", None
+    return f"{label:<20} {actual[0]}x{actual[1]}", expected
 
 
 def main():
