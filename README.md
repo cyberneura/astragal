@@ -178,4 +178,17 @@ python3 resources/app-icons/inspect_icns.py
 ```
 
 It needs nothing but the standard library, and exits non-zero if any of the sizes
-macOS asks for (16 through 1024) is missing.
+macOS asks for (16 through 512) is missing. 1024 is reported when it is absent but
+does not fail the check: an app whose master artwork is 512px cannot produce one,
+and an upscaled entry is not resolution — macOS falls back to 512 either way.
+
+To rebuild an `.icns` from a single master PNG (16 through 512, plus 1024 when the
+master is that large):
+
+```shell
+python3 resources/app-icons/build_icns.py <master.png> <out.icns>
+```
+
+Also standard library only, so it works where `iconutil` and `sips` do not — which
+is why the icons of the other macOS apps here are rebuilt with this one rather than
+with a copy of it kept in each repository.

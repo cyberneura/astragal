@@ -41,8 +41,15 @@ HEADERLESS = {"is32", "il32", "ih32", "it32", "ic04", "ic05"}
 # 画像ではない補助チャンクなので、解像度の集計からは外す。
 NON_IMAGE = {"s8mk", "l8mk", "h8mk", "t8mk", "TOC ", "icnV", "info", "name", "sbtp", "slct"}
 
-# macOS が実際に引くサイズ。1024 が無いと Finder の最大表示や Dock の拡大で拡大される。
-REQUIRED = (16, 32, 64, 128, 256, 512, 1024)
+# macOS が実際に引くサイズ。ここに抜けがあるとその大きさで表示された時に
+# 拡大されてボケる (1Password の権限ダイアログの 16px がその例)。
+REQUIRED = (16, 32, 64, 128, 256, 512)
+
+# あると良いが、無くても落とさないサイズ。Finder の最大表示と Dock の拡大が
+# 引く大きさだが、**512 のマスターしか無いアプリでは作りようがない** ——
+# 拡大して埋めても解像度は増えず、512 を使う macOS の既定の方が正直なため
+# (2026-09-07、CYBERNEURA-DEV-686 の指示)。
+OPTIONAL = (1024,)
 
 
 def read_entries(data, path):
@@ -154,11 +161,14 @@ def main():
             covered.add(size)
 
     missing = [size for size in REQUIRED if size not in covered]
+    absent_optional = [size for size in OPTIONAL if size not in covered]
     print(f"\ncovered: {', '.join(str(s) for s in sorted(covered))}")
+    if absent_optional:
+        print(f"absent (optional): {', '.join(str(s) for s in absent_optional)}")
     if missing:
         print(f"missing: {', '.join(str(s) for s in missing)}")
         return 1
-    print("all sizes present")
+    print("every required size is present")
     return 0
 
 
