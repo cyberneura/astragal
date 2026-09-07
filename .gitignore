@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# アイコンの補助スクリプト (resources/app-icons/) を動かすと出る
+__pycache__/
