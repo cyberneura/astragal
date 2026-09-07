@@ -20,8 +20,9 @@ Pillow も ImageMagick も入っていない環境がある。アイコンの解
     icp4 16   ic11 32(=16@2x)   icp5 32   ic12 64(=32@2x)
     ic07 128  ic13 256(=128@2x) ic08 256  ic14 512(=256@2x)  ic09 512
 
-1024 (`ic10`) は入れない。512 のマスターから作れるのは拡大であって解像度では
-ないので、無い方が正直で、`Finder` も無ければ 512 を使う。
+**入れるのはマスター以下のサイズだけ。** 512 のマスターから 1024 を作っても
+拡大であって解像度ではないので、無い方が正直で、Finder も無ければ 512 を使う。
+逆にマスターが 1024 あれば `ic10` も入る (このリポジトリのマスターがそれ)。
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ SLOTS: list[tuple[bytes, int]] = [
     (b"ic08", 256),
     (b"ic14", 512),
     (b"ic09", 512),
+    (b"ic10", 1024),
 ]
 
 
@@ -210,8 +212,14 @@ def write_png(image: Image) -> bytes:
 
 
 def build_icns(master: Image) -> bytes:
+    # マスターより大きいスロットは飛ばす。埋めれば「あることになる」が、中身は
+    # 引き伸ばした 512 でしかなく、macOS が自前で拡大するのと変わらない
+    # (かえって「1024 がある」と読める分たちが悪い)。
+    usable = [(slot, size) for slot, size in SLOTS if size <= master.width]
+    if not usable:
+        raise ValueError(f"master is smaller than the smallest slot ({SLOTS[0][1]}px)")
     entries = bytearray()
-    for slot, size in SLOTS:
+    for slot, size in usable:
         payload = write_png(downsample(master, size))
         entries += slot + struct.pack(">I", len(payload) + 8) + payload
     return b"icns" + struct.pack(">I", len(entries) + 8) + bytes(entries)
@@ -223,7 +231,8 @@ def main(argv: list[str]) -> int:
         return 2
     master = read_png(Path(argv[1]))
     Path(argv[2]).write_bytes(build_icns(master))
-    print(f"{argv[2]}: {', '.join(str(size) for _, size in SLOTS)}")
+    written = sorted({size for _, size in SLOTS if size <= master.width})
+    print(f"{argv[2]}: {', '.join(str(size) for size in written)}")
     return 0
 
 
