@@ -1,7 +1,7 @@
-# jj-menu (https://github.com/cyberneura/jj-menu) 用のメニュー定義。
+# j-menu (https://github.com/cyberneura/j-menu) 用のメニュー定義。
 #
-# 各エントリのコマンドは、jj-menu が組み立てて**呼び出し元のシェルで eval される**。
-# そのため、複数手順は必ず `&&` で繋いで fail-fast にすること (jj-menu は
+# 各エントリのコマンドは、j-menu が組み立てて**呼び出し元のシェルで eval される**。
+# そのため、複数手順は必ず `&&` で繋いで fail-fast にすること (j-menu は
 # リストの各行を改行で連結するだけで、`set -e` も `&&` も足さない)。
 # 先頭に `set -e` を置く手もあるが、errexit が対話シェルに残って以後の
 # タイポでシェルごと落ちるので使わない。
