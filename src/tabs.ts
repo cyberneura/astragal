@@ -30,6 +30,13 @@ let tabs: TerminalTab[] = [];
 let activeTabId: number | null = null;
 /** タブ名の連番。閉じても戻さない (同じ名前のタブが 2 つ並ばないように) */
 let nextTabNumber = 1;
+/**
+ * 最近使った順のタブ id。先頭がアクティブなタブで、Ctrl+Tab はこの順に辿る。
+ * 表示順 (tabs) とは独立していて、タブの並べ替えでは動かない。
+ */
+let mruOrder: number[] = [];
+/** Ctrl を押している間だけ立つ、Ctrl+Tab の巡回状態 */
+let cycle: { order: number[]; index: number } | null = null;
 let elements: TabElements;
 let appConfig: AppConfig;
 
@@ -112,11 +119,28 @@ function clearEmptyNotice(): void {
   emptyNotice = null;
 }
 
+/**
+ * タブを切り替え、最近使った順の先頭へ持ち上げる。ユーザーが「このタブを使う」と
+ * 決めた時の入口はすべてこちらを通す。
+ */
 function switchToTab(tabId: number) {
+  if (!showTab(tabId)) {
+    return;
+  }
+  touchMru(tabId);
+}
+
+/**
+ * 表示だけを切り替える。最近使った順は動かさないので、Ctrl+Tab の巡回中の
+ * プレビューにも使える (確定は Ctrl を離した時)。
+ *
+ * @returns そのタブが存在して切り替えられたか
+ */
+function showTab(tabId: number): boolean {
   // 閉じられた直後の id で呼ばれることがある。素通しすると全タブが
   // 非表示のまま残る。
   if (!tabs.some((tab) => tab.session.id === tabId)) {
-    return;
+    return false;
   }
   tabs.forEach((tab) => {
     const isActive = tab.session.id === tabId;
@@ -128,6 +152,16 @@ function switchToTab(tabId: number) {
     activeTabId = tabId;
     fitLater(tab, true);
   });
+  return true;
+}
+
+/** そのタブを最近使った順の先頭へ移す */
+function touchMru(tabId: number): void {
+  const index = mruOrder.indexOf(tabId);
+  if (index !== -1) {
+    mruOrder.splice(index, 1);
+  }
+  mruOrder.unshift(tabId);
 }
 
 /**
@@ -159,6 +193,11 @@ async function closeTab(tabId: number) {
   tab.button.remove();
   tabs.splice(index, 1);
 
+  const mruIndex = mruOrder.indexOf(tabId);
+  if (mruIndex !== -1) {
+    mruOrder.splice(mruIndex, 1);
+  }
+
   // 裏のタブを閉じただけならアクティブは動かさない。切り替えてしまうと、
   // 以降のキー入力が別のシェルに飛ぶ。
   //
@@ -188,11 +227,79 @@ function setFontSize(size: number) {
   fitLater(tab);
 }
 
+// ── Ctrl+Tab Cycling ─────────────────────────────────────────────────────────
+//
+// ブラウザや VSCode と同じ「最近使った順」の巡回。Ctrl を押している間は順序を
+// 固定したまま表示だけ動かし、Ctrl を離した時点のタブを先頭へ確定する。これで
+// Ctrl+Tab を単発で繰り返すと 2 つのタブを行き来し、Ctrl を押したまま Tab を
+// 2 回・3 回と押すと 2 つ前・3 つ前のタブへ届く。
+
+/**
+ * 巡回を 1 つ進める。
+ *
+ * @param step 1 で過去へ (Ctrl+Tab)、-1 で戻る (Ctrl+Shift+Tab)
+ */
+function cycleTabs(step: number): void {
+  if (!cycle) {
+    // 巡回中は順序を固定する。1 回ごとに並べ替えると Tab を押し続けても
+    // 2 つのタブを往復するだけになり、3 つ前のタブへ届かない。
+    const order = mruOrder.filter((id) => tabs.some((tab) => tab.session.id === id));
+    if (order.length < 2) {
+      return;
+    }
+    cycle = { order, index: 0 };
+  }
+
+  // 巡回中にシェルが終了してタブが閉じることがある。消えた id は飛ばす。
+  const { order } = cycle;
+  for (let i = 0; i < order.length; i++) {
+    cycle.index = (cycle.index + step + order.length) % order.length;
+    if (showTab(order[cycle.index])) {
+      return;
+    }
+  }
+  cycle = null;
+}
+
+/** Ctrl が離れた時点で、表示中のタブを最近使った順の先頭へ確定する */
+function commitCycle(): void {
+  if (!cycle) {
+    return;
+  }
+  cycle = null;
+  if (activeTabId !== null) {
+    touchMru(activeTabId);
+  }
+}
+
+/**
+ * Ctrl+Tab を xterm より先に捕まえる。xterm は Ctrl の有無に関わらず Tab を
+ * タブ文字として pty へ送る (Keyboard.ts の keyCode 9) ので、バブリングを待つと
+ * シェルの補完が動いてしまう。capture で拾って伝播ごと止める。
+ */
+function handleCycleKeydown(e: KeyboardEvent): void {
+  if (e.key !== "Tab" || !e.ctrlKey || e.metaKey || e.altKey) {
+    return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+  cycleTabs(e.shiftKey ? -1 : 1);
+}
+
+function handleCycleKeyup(e: KeyboardEvent): void {
+  if (e.key === "Control" || !e.ctrlKey) {
+    commitCycle();
+  }
+}
+
 // ── Keyboard Shortcuts ───────────────────────────────────────────────────────
 
 function handleKeydown(e: KeyboardEvent) {
   // Ctrl は pty に通す。Ctrl+W (直前の単語を削除) や Ctrl+N (履歴を次へ) は
   // シェルの日常的なキーバインドで、奪うとタブごとシェルが消える。
+  // 例外は Ctrl+Tab だけで、こちらは handleCycleKeydown が先に捕まえる
+  // (tty では Ctrl+Tab と Tab を区別できないので、奪ってもシェルのキーバインドは
+  // 素の Tab で届く)。
   if (!e.metaKey) {
     return;
   }
@@ -227,6 +334,11 @@ export async function initTabs(ui: TabElements, config: AppConfig): Promise<void
   appConfig = config;
 
   ui.newTabButton.addEventListener("click", () => createTab());
+  document.addEventListener("keydown", handleCycleKeydown, true);
+  document.addEventListener("keyup", handleCycleKeyup, true);
+  // ウインドウが背面へ回ると Ctrl の keyup が届かない (吹き出しは blur で隠れる)。
+  // 巡回したまま残すと、次の Ctrl+Tab が古い順序の続きから動く。
+  window.addEventListener("blur", commitCycle);
   document.addEventListener("keydown", handleKeydown);
   window.addEventListener("resize", () => {
     const tab = activeTab();

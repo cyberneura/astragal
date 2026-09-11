@@ -23,7 +23,7 @@ public リポジトリなので、**README・UI 文字列・エラーメッセ�
 | `src-tauri/src/config.rs` | `~/.config/astragal/config.yaml` の読み込みとマージ |
 | `src/terminal.ts` | xterm の生成とテーマ適用 |
 | `src/links.ts` | URL の検出と Cmd+クリックでの起動 |
-| `src/tabs.ts` | タブ管理と Cmd 系キーバインド |
+| `src/tabs.ts` | タブ管理、Cmd 系キーバインド、Ctrl+Tab のタブ巡回 |
 | `src/main.ts` / `src/small.ts` | メインウインドウ / 吹き出しの入口 |
 | `src/about.ts` | トレイメニューの About から開くウインドウ |
 | `resources/app-icons/` | アイコンのマスター素材と `generate.py` / `inspect_icns.py` |
@@ -31,6 +31,21 @@ public リポジトリなので、**README・UI 文字列・エラーメッセ�
 常駐ウインドウは 2 つある。`main` (タブ付き) と `small` (メニューバーアイコン直下に出る
 吹き出し)。挙動が違うので、片方だけ直して済ませないこと。`about` は開くたびに作り、
 閉じると破棄される。
+
+## キーバインド
+
+Cmd 系は `document` のバブリングで拾っている。xterm は Cmd 付きのキーを pty へ
+流さないので、これで足りる。
+
+**Ctrl 系はそうはいかない。** xterm は Ctrl の有無に関わらず Tab をタブ文字として
+pty へ送る (`xterm/src/common/input/Keyboard.ts` の keyCode 9) ため、Ctrl+Tab を
+バブリングで待つとシェルの補完が先に動く。xterm のリスナーは textarea に張られて
+いるので、`document` の **capture** で拾って `stopPropagation()` まで行う
+(`handleCycleKeydown`)。他の Ctrl 系を足す時も同じ扱いが要る。
+
+Ctrl+Tab は最近使った順 (MRU) の巡回で、Ctrl を押している間は順序を固定したまま
+表示だけ動かし、Ctrl の keyup で確定する。ウインドウが背面へ回ると keyup が届かない
+ので `blur` でも確定する (吹き出しは blur で隠れるため必須)。
 
 ## コマンド
 
