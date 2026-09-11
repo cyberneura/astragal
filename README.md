@@ -7,6 +7,9 @@ A lightweight terminal app for macOS (Tauri 2.x + xterm.js).
   (left click the icon to open it, right click for the menu, which also has an About
   entry with the version and links)
 - Global hotkeys to show and hide the windows
+- Ctrl+Tab cycles tabs in most-recently-used order, so pressing it repeatedly flips
+  between the last two tabs. Hold Ctrl and press Tab twice for the second most recent
+  tab, three times for the third, and add Shift to walk the other way
 - Cmd+click a URL to open it in the default browser. Holding Cmd underlines the URL
   under the pointer, and a URL that soft-wraps across lines opens in full
 - Configuration through `~/.config/astragal/config.yaml`
