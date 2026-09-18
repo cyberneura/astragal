@@ -248,9 +248,14 @@ function switchToAdjacentTab(step: number): void {
  * "Unidentified" 等。名前付きのキーは 1 文字にならないので長さで判別できる)。
  * 文字が取れているのに `code` まで見ると、その位置に別の文字が載っている配列
  * (ドイツ語の `BracketRight` は "+" 等) でタブ移動が誤爆する。
+ *
+ * Option (`altKey`) を弾くのは `code` で判定する側だけ。北欧系の配列では
+ * "[" / "]" の入力自体に Option が要る (Option+8 / Option+9) ので、`key` が
+ * 文字として取れている側で弾くと、それらの配列から刻印どおりに押しても
+ * 届かなくなる (Codex 指摘)。
  */
 function bracketTabStep(e: KeyboardEvent): number | null {
-  if (!e.shiftKey || e.ctrlKey || e.altKey) {
+  if (!e.shiftKey || e.ctrlKey) {
     return null;
   }
   if (e.key === "[" || e.key === "{") {
@@ -259,7 +264,7 @@ function bracketTabStep(e: KeyboardEvent): number | null {
   if (e.key === "]" || e.key === "}") {
     return 1;
   }
-  if (e.key.length === 1) {
+  if (e.altKey || e.key.length === 1) {
     return null;
   }
   if (e.code === "BracketLeft") {
