@@ -218,6 +218,59 @@ function activeTab(): TerminalTab | undefined {
   return tabs.find((tab) => tab.session.id === activeTabId);
 }
 
+/**
+ * 表示順で隣のタブへ移る。端まで行ったら反対の端へ回り込む (iTerm2 と同じ)。
+ * 最近使った順ではなくタブバーの並び順で動くので、Ctrl+Tab の巡回とは別物。
+ *
+ * @param step -1 で左のタブ、1 で右のタブ
+ */
+function switchToAdjacentTab(step: number): void {
+  if (activeTabId === null || tabs.length < 2) {
+    return;
+  }
+  const index = tabs.findIndex((tab) => tab.session.id === activeTabId);
+  if (index === -1) {
+    return;
+  }
+  const next = (index + step + tabs.length) % tabs.length;
+  switchToTab(tabs[next].session.id);
+}
+
+/**
+ * Cmd+Shift+[ / ] なら移動方向を返す。そうでなければ null。
+ *
+ * **`key` を先に見る。** `code` はキーの物理位置 (US 配列基準) なので、JIS 配列では
+ * "[" のキーが `BracketRight` として来る。配列に従った文字である `key` を優先すれば
+ * どちらの配列でも刻印どおりに動く。macOS は Cmd を押している間 Shift を文字へ
+ * 適用しないことがあるため、"[" と "{" の両方を受ける。
+ *
+ * `code` は **`key` が文字を特定できなかった時だけ**の保険 ("Dead" /
+ * "Unidentified" 等。名前付きのキーは 1 文字にならないので長さで判別できる)。
+ * 文字が取れているのに `code` まで見ると、その位置に別の文字が載っている配列
+ * (ドイツ語の `BracketRight` は "+" 等) でタブ移動が誤爆する。
+ */
+function bracketTabStep(e: KeyboardEvent): number | null {
+  if (!e.shiftKey || e.ctrlKey || e.altKey) {
+    return null;
+  }
+  if (e.key === "[" || e.key === "{") {
+    return -1;
+  }
+  if (e.key === "]" || e.key === "}") {
+    return 1;
+  }
+  if (e.key.length === 1) {
+    return null;
+  }
+  if (e.code === "BracketLeft") {
+    return -1;
+  }
+  if (e.code === "BracketRight") {
+    return 1;
+  }
+  return null;
+}
+
 function setFontSize(size: number) {
   const tab = activeTab();
   if (!tab) {
@@ -304,6 +357,13 @@ function handleKeydown(e: KeyboardEvent) {
     return;
   }
   const fontSize = activeTab()?.session.terminal.options.fontSize ?? appConfig.font.size;
+
+  const bracketStep = bracketTabStep(e);
+  if (bracketStep !== null) {
+    e.preventDefault();
+    switchToAdjacentTab(bracketStep);
+    return;
+  }
 
   if (e.key === "t" || e.key === "n") {
     e.preventDefault();

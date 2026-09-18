@@ -10,6 +10,8 @@ A lightweight terminal app for macOS (Tauri 2.x + xterm.js).
 - Ctrl+Tab cycles tabs in most-recently-used order, so pressing it repeatedly flips
   between the last two tabs. Hold Ctrl and press Tab twice for the second most recent
   tab, three times for the third, and add Shift to walk the other way
+- Cmd+Shift+[ and Cmd+Shift+] step to the previous and next tab in tab bar order,
+  wrapping around at the ends (the same shortcuts iTerm2 uses)
 - Cmd+click a URL to open it in the default browser. Holding Cmd underlines the URL
   under the pointer, and a URL that soft-wraps across lines opens in full
 - Configuration through `~/.config/astragal/config.yaml`
