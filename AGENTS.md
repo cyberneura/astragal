@@ -23,7 +23,7 @@ public リポジトリなので、**README・UI 文字列・エラーメッセ�
 | `src-tauri/src/config.rs` | `~/.config/astragal/config.yaml` の読み込みとマージ |
 | `src/terminal.ts` | xterm の生成とテーマ適用 |
 | `src/links.ts` | URL の検出と Cmd+クリックでの起動 |
-| `src/tabs.ts` | タブ管理、Cmd 系キーバインド、Ctrl+Tab のタブ巡回 |
+| `src/tabs.ts` | タブ管理、Cmd 系キーバインド、Ctrl+Tab のタブ巡回、Cmd+Shift+[ / ] のタブ移動 |
 | `src/main.ts` / `src/small.ts` | メインウインドウ / 吹き出しの入口 |
 | `src/about.ts` | トレイメニューの About から開くウインドウ |
 | `resources/app-icons/` | アイコンのマスター素材と `generate.py` / `inspect_icns.py` |
@@ -46,6 +46,18 @@ pty へ送る (`xterm/src/common/input/Keyboard.ts` の keyCode 9) ため、Ctrl
 Ctrl+Tab は最近使った順 (MRU) の巡回で、Ctrl を押している間は順序を固定したまま
 表示だけ動かし、Ctrl の keyup で確定する。ウインドウが背面へ回ると keyup が届かない
 ので `blur` でも確定する (吹き出しは blur で隠れるため必須)。
+
+Cmd+Shift+[ / ] は iTerm2 と同じ「表示順で隣のタブへ」。MRU ではなくタブバーの
+並び順で動き、端では反対の端へ回り込む。判定は `key` (配列に従った文字) を先に見て、
+`code` (US 配列基準の物理位置) は保険にしている。JIS 配列では刻印 "[" のキーが
+`code: "BracketRight"` で来るため、`code` を優先すると左右が逆になる。macOS は Cmd を
+押している間 Shift を文字へ適用しないことがあるので、"[" と "{" の両方を受ける。
+`code` を見るのは `key` が文字を特定できなかった時 (`"Dead"` / `"Unidentified"` 等、
+1 文字にならない値) だけ。文字が取れているのに `code` へ落ちると、その位置に別の文字が
+載っている配列 (ドイツ語の `BracketRight` は "+") でタブ移動が誤爆する。
+Option (`altKey`) を弾くのも `code` で判定する側だけ。北欧系の配列は "[" / "]" の入力に
+Option が要る (Option+8 / Option+9) ので、`key` が文字として取れている側で弾くと
+そこから届かなくなる。
 
 ## コマンド
 
