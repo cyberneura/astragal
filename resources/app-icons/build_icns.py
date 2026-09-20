@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""1 枚の PNG から `.icns` を組み立てる (標準ライブラリだけ)。
+"""PNG から `.icns` を組み立てる (標準ライブラリだけ)。
 
     python3 resources/app-icons/build_icns.py <master.png> <out.icns>
+    python3 resources/app-icons/build_icns.py <masters-dir> <out.icns>
 
 **なぜ自前で書くか**: macOS の `iconutil` / `sips` は macOS でしか動かず、
 Pillow も ImageMagick も入っていない環境がある。アイコンの解像度不足は
@@ -23,6 +24,13 @@ Pillow も ImageMagick も入っていない環境がある。アイコンの解
 **入れるのはマスター以下のサイズだけ。** 512 のマスターから 1024 を作っても
 拡大であって解像度ではないので、無い方が正直で、Finder も無ければ 512 を使う。
 逆にマスターが 1024 あれば `ic10` も入る (このリポジトリのマスターがそれ)。
+
+**サイズごとに描き分けたマスターを渡せる。** 第 1 引数にディレクトリを渡すと、
+その中の `*<size>*.png` (例 `icon-16.png`) を各スロットへそのまま入れる。
+太さ 3% の線は 512 から 16 へ縮小すると 0.5px になって消えるので、小さい
+サイズだけ線を太く描いた絵を使いたいことがある (quickllm の
+`resources/app-icons/generate.py` がそれ。CYBERNEURA-DEV-823)。
+ちょうどのサイズが無いスロットは、それより大きい最小のマスターから縮小する。
 """
 
 from __future__ import annotations
@@ -211,28 +219,82 @@ def write_png(image: Image) -> bytes:
     )
 
 
-def build_icns(master: Image) -> bytes:
+def build_icns(masters: dict[int, Image]) -> bytes:
+    """`{一辺: 画像}` から icns を組み立てる。
+
+    スロットにちょうどのマスターがあればそれを使い、無ければそれより大きい
+    最小のマスターから縮小する。
+    """
+    if not masters:
+        raise ValueError("no masters given")
+    largest = max(masters)
     # マスターより大きいスロットは飛ばす。埋めれば「あることになる」が、中身は
-    # 引き伸ばした 512 でしかなく、macOS が自前で拡大するのと変わらない
+    # 引き伸ばした絵でしかなく、macOS が自前で拡大するのと変わらない
     # (かえって「1024 がある」と読める分たちが悪い)。
-    usable = [(slot, size) for slot, size in SLOTS if size <= master.width]
+    usable = [(slot, size) for slot, size in SLOTS if size <= largest]
     if not usable:
-        raise ValueError(f"master is smaller than the smallest slot ({SLOTS[0][1]}px)")
+        raise ValueError(f"masters are smaller than the smallest slot ({SLOTS[0][1]}px)")
+    rendered: dict[int, bytes] = {}
     entries = bytearray()
     for slot, size in usable:
-        payload = write_png(downsample(master, size))
+        if size not in rendered:
+            if size in masters:
+                image = masters[size]
+            else:
+                source = min(s for s in masters if s >= size)
+                image = downsample(masters[source], size)
+            rendered[size] = write_png(image)
+        payload = rendered[size]
         entries += slot + struct.pack(">I", len(payload) + 8) + payload
     return b"icns" + struct.pack(">I", len(entries) + 8) + bytes(entries)
+
+
+def read_masters(source: Path) -> dict[int, Image]:
+    """PNG 1 枚、またはサイズ別 PNG の入ったディレクトリを読む。
+
+    正方形の確認はここで行う。ちょうどのサイズのマスターは `downsample` を
+    通らずにそのままスロットへ入るので、あちらの検査に任せると
+    16x8 のような画像が黙って icns に入ってしまう。
+    """
+    def load(path: Path) -> Image:
+        image = read_png(path)
+        if image.width != image.height:
+            raise ValueError(
+                f"{path} is {image.width}x{image.height}; masters must be square"
+            )
+        return image
+
+    if source.is_file():
+        image = load(source)
+        return {image.width: image}
+    paths = sorted(source.glob("*.png"))
+    if not paths:
+        raise ValueError(f"{source} has no *.png")
+    masters: dict[int, Image] = {}
+    for path in paths:
+        image = load(path)
+        if image.width in masters:
+            raise ValueError(f"two masters claim {image.width}px (second: {path})")
+        masters[image.width] = image
+    return masters
 
 
 def main(argv: list[str]) -> int:
     if len(argv) != 3:
         print(__doc__)
         return 2
-    master = read_png(Path(argv[1]))
-    Path(argv[2]).write_bytes(build_icns(master))
-    written = sorted({size for _, size in SLOTS if size <= master.width})
-    print(f"{argv[2]}: {', '.join(str(size) for size in written)}")
+    masters = read_masters(Path(argv[1]))
+    Path(argv[2]).write_bytes(build_icns(masters))
+    largest = max(masters)
+    written = sorted({size for _, size in SLOTS if size <= largest})
+    # どのサイズをそのまま使い、どれを縮小で作ったかを出す。
+    # 「サイズ別に描いたつもりがファイル名を間違えていて縮小されていた」を
+    # 気付けるようにするため。
+    detail = ", ".join(
+        f"{size}{'' if size in masters else '*'}" for size in written
+    )
+    legend = "  (* = downsampled, no master at that size)" if "*" in detail else ""
+    print(f"{argv[2]}: {detail}{legend}")
     return 0
 
 
