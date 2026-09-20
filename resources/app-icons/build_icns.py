@@ -250,16 +250,29 @@ def build_icns(masters: dict[int, Image]) -> bytes:
 
 
 def read_masters(source: Path) -> dict[int, Image]:
-    """PNG 1 枚、またはサイズ別 PNG の入ったディレクトリを読む。"""
+    """PNG 1 枚、またはサイズ別 PNG の入ったディレクトリを読む。
+
+    正方形の確認はここで行う。ちょうどのサイズのマスターは `downsample` を
+    通らずにそのままスロットへ入るので、あちらの検査に任せると
+    16x8 のような画像が黙って icns に入ってしまう。
+    """
+    def load(path: Path) -> Image:
+        image = read_png(path)
+        if image.width != image.height:
+            raise ValueError(
+                f"{path} is {image.width}x{image.height}; masters must be square"
+            )
+        return image
+
     if source.is_file():
-        image = read_png(source)
+        image = load(source)
         return {image.width: image}
     paths = sorted(source.glob("*.png"))
     if not paths:
         raise ValueError(f"{source} has no *.png")
     masters: dict[int, Image] = {}
     for path in paths:
-        image = read_png(path)
+        image = load(path)
         if image.width in masters:
             raise ValueError(f"two masters claim {image.width}px (second: {path})")
         masters[image.width] = image
@@ -280,7 +293,8 @@ def main(argv: list[str]) -> int:
     detail = ", ".join(
         f"{size}{'' if size in masters else '*'}" for size in written
     )
-    print(f"{argv[2]}: {detail}  (* = 縮小で作ったスロット)")
+    legend = "  (* = downsampled, no master at that size)" if "*" in detail else ""
+    print(f"{argv[2]}: {detail}{legend}")
     return 0
 
 
