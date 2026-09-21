@@ -2,7 +2,8 @@
 
 A lightweight terminal app for macOS (Tauri 2.x + xterm.js).
 
-- A main window with tabs
+- A main window with tabs. Hiding a window with no tabs left and showing it again
+  opens a fresh tab, in both the main window and the popover
 - A small popover terminal that drops down from the menu bar (tray) icon
   (left click the icon to open it, right click for the menu, which also has an About
   entry with the version and links)

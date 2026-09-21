@@ -1,3 +1,4 @@
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   closeSession,
   fitSession,
@@ -37,6 +38,8 @@ let nextTabNumber = 1;
 let mruOrder: number[] = [];
 /** Ctrl を押している間だけ立つ、Ctrl+Tab の巡回状態 */
 let cycle: { order: number[]; index: number } | null = null;
+/** 起動中 (startSession 待ち) の createTab の数。表示時の補充が二重に走らないように見る */
+let pendingCreates = 0;
 let elements: TabElements;
 let appConfig: AppConfig;
 
@@ -63,7 +66,21 @@ function createTabButton(tabId: number, label: string): HTMLButtonElement {
 }
 
 export async function createTab(): Promise<void> {
+  pendingCreates++;
+  try {
+    await openTab();
+  } finally {
+    pendingCreates--;
+  }
+}
+
+async function openTab(): Promise<void> {
   clearEmptyNotice();
+  // 表示時の補充で作り直す時、前回の起動失敗の表示は古くなっている。成功してから
+  // 消すと、並行して失敗した別の試行の表示まで消すので、試す前に消す。
+  elements.terminalsContainer
+    .querySelectorAll(":scope > .startup-error")
+    .forEach((box) => box.remove());
 
   const element = document.createElement("div");
   element.className = "terminal-container";
@@ -117,6 +134,18 @@ function showEmptyNotice(): void {
 function clearEmptyNotice(): void {
   emptyNotice?.remove();
   emptyNotice = null;
+}
+
+/**
+ * ウインドウが表示された時、タブが 1 つも無ければ 1 つ作る。最後のタブを閉じた
+ * まま隠したウインドウを開き直すと、空のままでは Cmd+T を押すまで何もできない。
+ *
+ * タブの作成中 (起動直後の初回を含む) は数に入らないので、それも待つ。
+ */
+function refillIfEmpty(): void {
+  if (tabs.length === 0 && pendingCreates === 0) {
+    createTab();
+  }
 }
 
 /**
@@ -412,7 +441,20 @@ export async function initTabs(ui: TabElements, config: AppConfig): Promise<void
     }
   });
 
-  await createTab();
+  // 最初のタブを先に作り始める。作成中は pendingCreates が立つので、購読の直後に
+  // 表示の合図が来ても二重には作らない。
+  const firstTab = createTab();
+
+  // 表示の合図は Rust が main / small を出すたびに送る (起動時の最初の表示は
+  // この購読より前なので届かないが、上の createTab が同じ役を果たす)。
+  // 購読に失敗しても、Cmd+T で作れるので初期化は止めない。
+  try {
+    await getCurrentWebviewWindow().listen("window-shown", refillIfEmpty);
+  } catch (e) {
+    console.error("Failed to subscribe to the window-shown event:", e);
+  }
+
+  await firstTab;
   const tab = activeTab();
   if (tab) {
     writeConfigWarning(tab.session, config);
