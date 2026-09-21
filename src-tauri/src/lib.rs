@@ -56,6 +56,8 @@ const BLUR_HIDE_GUARD: Duration = Duration::from_millis(250);
 /// トレイイベントの記録位置と現在のカーソルのずれを許容する幅 (論理ピクセル)。
 /// 超えたらイベント発生後にカーソルが動いたとみなし、アンカーの更新を見送る。
 const CURSOR_DRIFT_TOLERANCE: f64 = 8.0;
+/// main / small を表示した時に、そのウインドウへ送るイベント
+const WINDOW_SHOWN_EVENT: &str = "window-shown";
 
 // ── Commands ─────────────────────────────────────────────────────────────────
 
@@ -284,8 +286,20 @@ fn toggle_visibility(win: &WebviewWindow) -> Result<(), String> {
         return win.hide().map_err(|e| e.to_string());
     }
     let _ = move_to_cursor_monitor(win);
+    present_window(win)
+}
+
+/// ウインドウを前面に出し、front に表示されたことを伝える。
+///
+/// 表示の合図は front がタブを補充するのに使う (最後のタブを閉じたまま隠した
+/// ウインドウを開き直すと、空のままでは何もできないため)。macOS の hide は
+/// webview を破棄しないので、front 側からは「隠れていたのが出た」ことを
+/// 確実には知れない。表示する側から送る。
+fn present_window(win: &WebviewWindow) -> Result<(), String> {
     win.show().map_err(|e| e.to_string())?;
-    win.set_focus().map_err(|e| e.to_string())
+    win.set_focus().map_err(|e| e.to_string())?;
+    let _ = win.emit_to(win.label(), WINDOW_SHOWN_EVENT, ());
+    Ok(())
 }
 
 /// カーソルが載っているディスプレイの中央へ移す。既にそのディスプレイに居る時は
@@ -392,9 +406,7 @@ fn toggle_small_window(app: AppHandle, from_tray_click: bool) -> Result<(), Stri
     }
     emit_anchor(&app, arrow_x);
 
-    win.show().map_err(|e| e.to_string())?;
-    win.set_focus().map_err(|e| e.to_string())?;
-    Ok(())
+    present_window(&win)
 }
 
 fn emit_anchor(app: &AppHandle, arrow_x: f64) {
@@ -537,8 +549,7 @@ fn hide_window(app: AppHandle) -> Result<(), String> {
 fn show_window(app: AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("main") {
         let _ = move_to_cursor_monitor(&win);
-        win.show().map_err(|e| e.to_string())?;
-        win.set_focus().map_err(|e| e.to_string())?;
+        present_window(&win)?;
     }
     Ok(())
 }
@@ -924,8 +935,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(win) = app.get_webview_window("main") {
                 let _ = move_to_cursor_monitor(&win);
-                let _ = win.show();
-                let _ = win.set_focus();
+                let _ = present_window(&win);
             }
         }))
         .manage(AppState {
