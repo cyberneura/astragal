@@ -21,6 +21,14 @@ Pillow も ImageMagick も入っていない環境がある。アイコンの解
     icp4 16   ic11 32(=16@2x)   icp5 32   ic12 64(=32@2x)
     ic07 128  ic13 256(=128@2x) ic08 256  ic14 512(=256@2x)  ic09 512
 
+**エントリは大きいサイズから順に並べる** (`iconutil` とは逆順)。icns の中から
+「最初の 1 枚」だけを取る実装があり、その場合は先頭の 16px が拡大されて表示される。
+1Password の SSH キー許可ダイアログで Astragal のアイコンがボケていた件の対策で
+(CYBERNEURA-DEV-686)、きれいに出ていた iTerm2 の icns は先頭が 256px、ボケていた
+Astragal / quickllm / clipboard-palette は先頭が 16px だった。サイズを選んで引く
+macOS の通常の経路 (Finder / Dock / NSImage) は並び順に依存しないので、逆順にして
+失うものは無い。
+
 **入れるのはマスター以下のサイズだけ。** 512 のマスターから 1024 を作っても
 拡大であって解像度ではないので、無い方が正直で、Finder も無ければ 512 を使う。
 逆にマスターが 1024 あれば `ic10` も入る (このリポジトリのマスターがそれ)。
@@ -236,7 +244,8 @@ def build_icns(masters: dict[int, Image]) -> bytes:
         raise ValueError(f"masters are smaller than the smallest slot ({SLOTS[0][1]}px)")
     rendered: dict[int, bytes] = {}
     entries = bytearray()
-    for slot, size in usable:
+    # 大きい順に書く (先頭の 1 枚だけを読む実装向け。モジュールの docstring 参照)
+    for slot, size in sorted(usable, key=lambda entry: entry[1], reverse=True):
         if size not in rendered:
             if size in masters:
                 image = masters[size]

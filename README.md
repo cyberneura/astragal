@@ -166,12 +166,10 @@ padding on the macOS icon.
 ```shell
 python3 resources/app-icons/generate.py
 
-TMP=$(mktemp -d)
-pnpm tauri icon "$PWD/resources/app-icons/astragal-mac-icon.png"
-cp src-tauri/icons/icon.icns "$TMP/"
 pnpm tauri icon "$PWD/resources/app-icons/astragal-favicon.png"
-cp "$TMP/icon.icns" src-tauri/icons/
-rm -rf "$TMP" src-tauri/icons/android src-tauri/icons/ios
+rm -rf src-tauri/icons/android src-tauri/icons/ios
+python3 resources/app-icons/build_icns.py \
+  resources/app-icons/astragal-mac-icon.png src-tauri/icons/icon.icns
 
 cp resources/app-icons/tray-mac.png resources/app-icons/tray-win.png src-tauri/icons/
 ```
@@ -194,6 +192,11 @@ master is that large):
 ```shell
 python3 resources/app-icons/build_icns.py <master.png> <out.icns>
 ```
+
+It writes the entries largest first. Some programs read only the first image of an
+`.icns` and scale it to fit; with `iconutil` or `tauri icon` output that first image is
+the 16px one, which is how the icon came out blurry in 1Password's SSH key prompt.
+That is also why `icon.icns` is built with this script rather than `tauri icon`.
 
 Also standard library only, so it works where `iconutil` and `sips` do not — which
 is why the icons of the other macOS apps here are rebuilt with this one rather than
