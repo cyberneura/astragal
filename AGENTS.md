@@ -130,13 +130,20 @@ mac 用の余白が黙って消える。
 mac アプリ (quickllm / clipboard-palette 等) のアイコンもこれで直している** —
 icns を扱う道具はここに置くという約束で、各リポジトリに同じスクリプトを撒かない。
 
-現在の `icon.icns` は 16 / 32 / 64 / 128 / 256 / 512 / 1024px をすべて持ち、1024px の
-エントリは `resources/app-icons/astragal-mac-icon.png` (1024px のマスター) と一致する
-(CYBERNEURA-DEV-686 で検証)。**つまり他アプリのダイアログで Astragal のアイコンが
-ぼやける場合、原因はバンドルの資産ではなく呼び出し側**で、macOS から小さいサイズで
-アイコンを受け取って拡大している。Electron 製アプリで起きやすい (`app.getFileIcon` は
-macOS では最大 32x32 しか返さない)。同じダイアログを Terminal.app から出して、
-そちらも同じようにぼやけるかで確かめられる。
+現在の `icon.icns` は `build_icns.py` で 1024px のマスターから作ったもので、
+16 / 32 / 64 / 128 / 256 / 512 / 1024px をすべて持ち、**大きい順に並んでいる**。
+
+**並び順が効く (CYBERNEURA-DEV-686)。** 1Password の SSH キー許可ダイアログで Astragal の
+アイコンだけがボケていた。資産は全サイズ揃っていたので、当初は呼び出し側の問題と判断したが、
+きれいに出る iTerm2 の icns は先頭が 256px、ボケる Astragal (`tauri icon` 製) と
+quickllm / clipboard-palette (当時の `build_icns.py` 製) は先頭が 16px だった。
+スクリーンショットのボケ方も 12〜16px の拡大と一致する。icns の最初の 1 枚だけを読んで
+拡大する実装があると考え、大きい順に並べ替えた (v0.4.2)。**これで直ったかは macOS 上で
+確かめる必要があり、Linux では検証できない。** 直らなければ別の原因。
+
+- `pnpm tauri icon` は小さい順の icns を書くので、**icns はそれで作らない**
+  (手順は `README.md` の「アイコン」)
+- Finder / Dock / NSImage のようにサイズを選んで引く経路は並び順に依存しない
 
 ## 依存ライブラリの挙動を調べる時
 
