@@ -687,7 +687,13 @@ mod tests {
         // Assert
         assert_eq!(config.font.size, 18.0);
         assert_eq!(config.font.family, DEFAULT_FONT_FAMILY);
-        assert_eq!(config.shell.args, vec!["-l".to_string()]);
+        // Windows の既定シェル (PowerShell) には -l を渡さない
+        let expected_args: Vec<String> = if cfg!(windows) {
+            Vec::new()
+        } else {
+            vec!["-l".to_string()]
+        };
+        assert_eq!(config.shell.args, expected_args);
     }
 
     #[test]
