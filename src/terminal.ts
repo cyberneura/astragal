@@ -6,6 +6,7 @@ import { FitAddon } from "xterm-addon-fit";
 import type { SearchAddon } from "xterm-addon-search";
 import { Unicode11Addon } from "xterm-addon-unicode11";
 import { enableLinks } from "./links";
+import { IS_WINDOWS } from "./platform";
 import { createSearchAddon } from "./search";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -30,6 +31,8 @@ export interface Session {
   closeOnExit: boolean;
   /** このタブで一度でもユーザーの入力を受けたか。終了時に閉じるかの判定に使う */
   userInteracted: boolean;
+  /** シェルの終了を処理済みか。終了の通知が 2 回届いても 1 回だけ扱う */
+  exited: boolean;
   /** シェルが終了した時に呼ぶ。setSessionExitHandler で登録する */
   onExit?: () => void;
 }
@@ -199,6 +202,10 @@ export async function startSession(
     smoothScrollDuration: 0,
     // terminal.unicode は proposed API 扱いで、これが無いと getter が throw する
     allowProposedApi: true,
+    // Windows の pty は ConPTY。伝えておくと xterm が ConPTY 向けの補正を入れる
+    // (行を増やした時にスクロールバックから戻す、リフローを止める等)。buildNumber を
+    // 渡さないので、Windows 11 の新しい ConPTY でもリフローは止めたままになる (安全側)。
+    ...(IS_WINDOWS ? { windowsPty: { backend: "conpty" as const } } : {}),
   });
 
   const fitAddon = new FitAddon();
@@ -224,6 +231,7 @@ export async function startSession(
     links,
     closeOnExit: config.terminal.close_on_exit,
     userInteracted: false,
+    exited: false,
   };
   sessions.set(id, session);
 
@@ -266,6 +274,11 @@ export async function startSession(
  * この条件には掛からない。
  */
 function handleExit(session: Session): void {
+  // Windows では子の終了待ちと pty の EOF の両方から届きうる (lib.rs の spawn_exit_waiter)
+  if (session.exited) {
+    return;
+  }
+  session.exited = true;
   if (!session.closeOnExit || !session.userInteracted) {
     writeExitNotice(session, session.closeOnExit);
     return;

@@ -67,6 +67,17 @@ html, body {
   flex-shrink: 0;
 }
 
+/* Windows は OS のタイトルバーが webview の外に付くので、退避場所もタイトルも要らない
+   (タイトルは OS のタイトルバーに出る) */
+.platform-windows #traffic-light-space,
+.platform-windows #app-title {
+  display: none;
+}
+
+.platform-windows #tab-bar {
+  padding-left: 8px;
+}
+
 #app-title {
   display: flex;
   align-items: center;

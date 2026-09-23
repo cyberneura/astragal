@@ -1,5 +1,8 @@
 import { applyTerminalBackground, loadConfig, showStartupError } from "./terminal";
 import { initTabs } from "./tabs";
+import { applyPlatformClass } from "./platform";
+
+applyPlatformClass();
 
 const terminalsContainer = document.getElementById("terminals")!;
 

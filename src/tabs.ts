@@ -12,9 +12,11 @@ import {
   closeSearch,
   findInTerminal,
   initSearch,
+  isSearchOpen,
   openSearch,
   syncSearchWithActiveTab,
 } from "./search";
+import { IS_WINDOWS, shortcutLabel } from "./platform";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -132,7 +134,7 @@ function showEmptyNotice(): void {
   box.className = "empty-notice";
   box.textContent =
     "The shell exited and its tab closed.\n" +
-    "Press Cmd+T for a new tab, or set terminal.close_on_exit to false in the " +
+    `Press ${shortcutLabel("Cmd+T", "Ctrl+Shift+T")} for a new tab, or set terminal.close_on_exit to false in the ` +
     "config file to keep tabs open after the shell exits.";
   elements.terminalsContainer.appendChild(box);
   emptyNotice = box;
@@ -390,6 +392,127 @@ function handleCycleKeyup(e: KeyboardEvent): void {
 
 // ── Keyboard Shortcuts ───────────────────────────────────────────────────────
 
+/** キーを消費する。xterm (textarea のリスナー) へも、既定の動作へも渡さない */
+function consume(e: KeyboardEvent): void {
+  e.preventDefault();
+  e.stopPropagation();
+}
+
+function selectTabByNumber(digit: number): void {
+  const index = digit - 1;
+  if (index < tabs.length) switchToTab(tabs[index].session.id);
+}
+
+/**
+ * アクティブなタブの選択範囲をクリップボードへ。選択が無ければ何もしない。
+ *
+ * Clipboard API は secure context でしか生えない。Tauri の webview は secure context
+ * だが、無かった時は copy コマンドに落とす (xterm が自分の要素の copy イベントで
+ * 選択範囲を書き込む。ターミナルにフォーカスがある時だけ効く)。
+ */
+function copySelection(): boolean {
+  const selection = activeTab()?.session.terminal.getSelection() ?? "";
+  if (!selection) {
+    return false;
+  }
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(selection).catch((error: unknown) => {
+      console.error("astragal: could not copy the selection", error);
+    });
+  } else {
+    document.execCommand("copy");
+  }
+  return true;
+}
+
+/**
+ * Windows のショートカット (Windows Terminal に合わせる)。
+ *
+ * macOS の Cmd に当たるキーが無く、Ctrl 単独はシェルのキー (Ctrl+W で単語削除、
+ * Ctrl+T で文字の入れ替え等) なので、タブと検索は Ctrl+Shift に寄せる。
+ * フォントサイズ (Ctrl+= / Ctrl+- / Ctrl+0) とコピー・貼り付けは Windows Terminal と同じ。
+ *
+ * xterm は Ctrl 付きのキーを制御文字として pty へ送るので、Ctrl+Tab と同じく
+ * document の capture で先に拾って伝播を止める。キーは `code` (物理位置) で見る。
+ * Shift を押しているので `key` は配列ごとに違う記号になるため。
+ */
+function handleWindowsKeydown(e: KeyboardEvent): void {
+  if (e.altKey || e.metaKey) {
+    return;
+  }
+  // F3 / Shift+F3 は検索バーが開いている時だけ奪う。閉じている時は mc 等の
+  // ファンクションキーとして pty へ流す。
+  if (e.key === "F3" && !e.ctrlKey && isSearchOpen()) {
+    consume(e);
+    findInTerminal(e.shiftKey ? -1 : 1);
+    return;
+  }
+  if (!e.ctrlKey) {
+    return;
+  }
+
+  // 検索欄でのコピー・貼り付けは入力欄の既定の動作のまま
+  if ((e.code === "KeyC" || e.code === "KeyV") && e.target instanceof HTMLInputElement) {
+    return;
+  }
+  // 貼り付けは既定の動作 (textarea への paste イベント) に任せ、xterm がそれを pty へ
+  // 送る。xterm の keydown まで届くと ^V を送ってイベントを止めてしまうので、
+  // 伝播だけ止めて preventDefault はしない。
+  if (e.code === "KeyV") {
+    e.stopPropagation();
+    return;
+  }
+  // Ctrl+C は選択がある時だけコピー。無ければ従来どおり割り込み (^C) として pty へ
+  if (e.code === "KeyC" && !e.shiftKey) {
+    if (copySelection()) {
+      consume(e);
+      activeTab()?.session.terminal.clearSelection();
+    }
+    return;
+  }
+
+  if (!e.shiftKey) {
+    const fontSize = activeTab()?.session.terminal.options.fontSize ?? appConfig.font.size;
+    if (e.key === "=" || e.key === "+" || e.code === "NumpadAdd") {
+      consume(e);
+      setFontSize(Math.min(fontSize + 1, 32));
+    } else if (e.key === "-" || e.code === "NumpadSubtract") {
+      consume(e);
+      setFontSize(Math.max(fontSize - 1, 8));
+    } else if (e.key === "0" || e.code === "Numpad0") {
+      consume(e);
+      setFontSize(appConfig.font.size);
+    }
+    return;
+  }
+
+  const digit = /^Digit([1-9])$/.exec(e.code);
+  if (digit) {
+    consume(e);
+    selectTabByNumber(Number(digit[1]));
+    return;
+  }
+  switch (e.code) {
+    case "KeyT":
+    case "KeyN":
+      consume(e);
+      createTab();
+      break;
+    case "KeyW":
+      consume(e);
+      if (activeTabId !== null) closeTab(activeTabId);
+      break;
+    case "KeyF":
+      consume(e);
+      openSearch();
+      break;
+    case "KeyC":
+      consume(e);
+      copySelection();
+      break;
+  }
+}
+
 function handleKeydown(e: KeyboardEvent) {
   // Ctrl は pty に通す。Ctrl+W (直前の単語を削除) や Ctrl+N (履歴を次へ) は
   // シェルの日常的なキーバインドで、奪うとタブごとシェルが消える。
@@ -423,8 +546,7 @@ function handleKeydown(e: KeyboardEvent) {
     if (activeTabId !== null) closeTab(activeTabId);
   } else if (e.key >= "1" && e.key <= "9") {
     e.preventDefault();
-    const index = parseInt(e.key) - 1;
-    if (index < tabs.length) switchToTab(tabs[index].session.id);
+    selectTabByNumber(parseInt(e.key));
   } else if (e.key === "=" || e.key === "+") {
     e.preventDefault();
     setFontSize(Math.min(fontSize + 1, 32));
@@ -444,13 +566,18 @@ export async function initTabs(ui: TabElements, config: AppConfig): Promise<void
   appConfig = config;
 
   ui.newTabButton.addEventListener("click", () => createTab());
+  ui.newTabButton.title = `New tab (${shortcutLabel("⌘T", "Ctrl+Shift+T")})`;
   initSearch(ui.terminalsContainer, () => activeTab()?.session);
   document.addEventListener("keydown", handleCycleKeydown, true);
   document.addEventListener("keyup", handleCycleKeyup, true);
   // ウインドウが背面へ回ると Ctrl の keyup が届かない (吹き出しは blur で隠れる)。
   // 巡回したまま残すと、次の Ctrl+Tab が古い順序の続きから動く。
   window.addEventListener("blur", commitCycle);
-  document.addEventListener("keydown", handleKeydown);
+  if (IS_WINDOWS) {
+    document.addEventListener("keydown", handleWindowsKeydown, true);
+  } else {
+    document.addEventListener("keydown", handleKeydown);
+  }
   window.addEventListener("resize", () => {
     const tab = activeTab();
     if (tab) {
