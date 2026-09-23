@@ -296,10 +296,14 @@ fn spawn_exit_waiter(
         }
         let exited_at = Instant::now();
         loop {
-            let idle = last_output
+            // 静かな時間は子の終了時点から数え始める。終了前に長く黙っていたシェルが
+            // 最後に 1 行だけ書いて終わった時、その出力を読み出しスレッドが送る前に
+            // 「もう静か」と判断しないため
+            let since_output = last_output
                 .lock()
                 .map(|last| last.elapsed())
                 .unwrap_or(EXIT_OUTPUT_QUIET);
+            let idle = since_output.min(exited_at.elapsed());
             match exit_notice_wait(idle, exited_at.elapsed()) {
                 None => break,
                 Some(wait) => std::thread::sleep(wait),
@@ -645,6 +649,37 @@ fn anchor_small_window(app: &AppHandle, win: &WebviewWindow) -> Result<PopoverAn
     })
 }
 
+/// 論理座標の矩形
+#[derive(Debug, Clone, Copy)]
+struct LogicalRect {
+    left: f64,
+    top: f64,
+    right: f64,
+    bottom: f64,
+}
+
+/// Windows の通知領域のアイコンの位置 (center_x, y) を、モニタと作業領域の差から推測する。
+///
+/// 作業領域から外れている辺がタスクバーのある辺。通知領域は横置きなら右端、
+/// 縦置き (左右) なら下端にある。center_x はアイコンの推定位置そのもので、
+/// ウインドウの配置は anchor_small_window の画面端クランプに任せる (ここで幅の半分を
+/// 引くと、ツノがアイコンから離れる)。
+fn windows_tray_guess(monitor: &LogicalRect, work_area: &LogicalRect) -> (f64, f64) {
+    if work_area.left > monitor.left {
+        // 左の縦置き: タスクバーの幅の中央、作業領域の下端
+        ((monitor.left + work_area.left) / 2.0, work_area.bottom)
+    } else if work_area.right < monitor.right {
+        // 右の縦置き
+        ((work_area.right + monitor.right) / 2.0, work_area.bottom)
+    } else if work_area.top > monitor.top {
+        // 上端: 通知領域は右端、タスクバーの下端 (= 作業領域の上端)
+        (work_area.right - SCREEN_EDGE_MARGIN, work_area.top)
+    } else {
+        // 下端 (既定)。自動的に隠す設定で作業領域がモニタ全体の時もここに来る
+        (work_area.right - SCREEN_EDGE_MARGIN, work_area.bottom)
+    }
+}
+
 /// 吹き出しの上端 y と、アイコンのどちら側に出すか。
 ///
 /// アイコンがモニタの下半分にある時 (Windows のタスクバーが下端にある既定の配置) は
@@ -667,11 +702,9 @@ fn popover_y(
 
 /// トレイの位置が分からない時の仮のアンカー。
 ///
-/// macOS はメニューバー (primary の上端中央) に置く。Windows は通知領域がタスクバーの
-/// 右端 (縦置きなら下端) にあるので、primary の作業領域 (タスクバーを除いた矩形) の
-/// 右端に置く。タスクバーが上端にある時は作業領域の上端、それ以外 (既定の下端と
-/// 左右の縦置き) は下端を使う。あくまで推測で、トレイのイベントを一度受ければ
-/// 実際のアイコンの位置に置き直される。
+/// macOS はメニューバー (primary の上端中央) に置く。Windows はタスクバーの位置を
+/// primary の作業領域 (タスクバーを除いた矩形) から推測する (windows_tray_guess)。
+/// あくまで推測で、トレイのイベントを一度受ければ実際のアイコンの位置に置き直される。
 fn fallback_tray_anchor(app: &AppHandle, logical_width: f64) -> TrayAnchor {
     let Some(primary) = app.primary_monitor().ok().flatten() else {
         return TrayAnchor {
@@ -683,17 +716,27 @@ fn fallback_tray_anchor(app: &AppHandle, logical_width: f64) -> TrayAnchor {
     let scale = primary.scale_factor();
     if cfg!(windows) {
         let area = primary.work_area();
-        let right = (area.position.x as f64 + area.size.width as f64) / scale;
-        // 作業領域の上端がモニタの上端より下 = タスクバーが上端にある
-        let y = if area.position.y > primary.position().y {
-            area.position.y as f64 / scale
-        } else {
-            (area.position.y as f64 + area.size.height as f64) / scale
+        let logical = |x: i32, y: i32, w: u32, h: u32| LogicalRect {
+            left: x as f64 / scale,
+            top: y as f64 / scale,
+            right: (x as f64 + w as f64) / scale,
+            bottom: (y as f64 + h as f64) / scale,
         };
-        // center_x はアイコンの推定位置そのもの。ウインドウの配置は anchor_small_window の
-        // 画面端クランプに任せる (ここで幅の半分を引くと、ツノがアイコンから離れる)
+        let monitor = logical(
+            primary.position().x,
+            primary.position().y,
+            primary.size().width,
+            primary.size().height,
+        );
+        let work_area = logical(
+            area.position.x,
+            area.position.y,
+            area.size.width,
+            area.size.height,
+        );
+        let (center_x, y) = windows_tray_guess(&monitor, &work_area);
         return TrayAnchor {
-            center_x: right - SCREEN_EDGE_MARGIN,
+            center_x,
             top: y,
             bottom: y,
         };
@@ -1379,6 +1422,42 @@ mod tests {
         assert_eq!(
             json,
             serde_json::json!({ "arrow_x": 12.5, "side": "above" })
+        );
+    }
+
+    #[test]
+    fn tray_guess_follows_the_taskbar_edge() {
+        // Arrange
+        // 論理 1920x1080 のモニタ。タスクバーの太さは 48 (縦置きは 62)
+        let monitor = LogicalRect {
+            left: 0.0,
+            top: 0.0,
+            right: 1920.0,
+            bottom: 1080.0,
+        };
+        let area = |left, top, right, bottom| LogicalRect {
+            left,
+            top,
+            right,
+            bottom,
+        };
+
+        // Act / Assert
+        assert_eq!(
+            windows_tray_guess(&monitor, &area(0.0, 0.0, 1920.0, 1032.0)),
+            (1920.0 - SCREEN_EDGE_MARGIN, 1032.0)
+        );
+        assert_eq!(
+            windows_tray_guess(&monitor, &area(0.0, 48.0, 1920.0, 1080.0)),
+            (1920.0 - SCREEN_EDGE_MARGIN, 48.0)
+        );
+        assert_eq!(
+            windows_tray_guess(&monitor, &area(62.0, 0.0, 1920.0, 1080.0)),
+            (31.0, 1080.0)
+        );
+        assert_eq!(
+            windows_tray_guess(&monitor, &area(0.0, 0.0, 1858.0, 1080.0)),
+            (1889.0, 1080.0)
         );
     }
 
