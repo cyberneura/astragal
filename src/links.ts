@@ -1,6 +1,7 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { IDisposable, ILink, ILinkProvider, Terminal } from "xterm";
 import { WebLinksAddon } from "xterm-addon-web-links";
+import { primaryModifierHeld } from "./platform";
 
 // ── Cmd キーの押下状態 ────────────────────────────────────────────────────────
 //
@@ -10,6 +11,8 @@ import { WebLinksAddon } from "xterm-addon-web-links";
 //
 // 押下状態は webview ごとに 1 つで足りるのでモジュールに置く。ウインドウ (main /
 // small) は別々の webview なので、それぞれが自分の分を持つ。
+//
+// Windows では Cmd の代わりに Ctrl を見る (platform.ts)。以下の「Cmd」は読み替える。
 
 type MetaHeldListener = (held: boolean) => void;
 
@@ -34,7 +37,8 @@ function watchMetaKey(): void {
   // xterm は入力用の textarea でキーイベントを止めるので、bubble では取りこぼす。
   // mousemove も見るのは、Cmd を押したままウインドウの外から入ってきた場合に
   // keydown が届かないため。
-  const sync = (event: KeyboardEvent | MouseEvent): void => setMetaHeld(event.metaKey);
+  const sync = (event: KeyboardEvent | MouseEvent): void =>
+    setMetaHeld(primaryModifierHeld(event));
   window.addEventListener("keydown", sync, true);
   window.addEventListener("keyup", sync, true);
   window.addEventListener("mousemove", sync, true);
@@ -124,7 +128,7 @@ function createWebLinkProvider(
  * この webview では window.open では何も開かない。opener プラグインを通す。
  */
 function openLink(event: MouseEvent, uri: string): void {
-  if (!event.metaKey || event.button !== 0) {
+  if (!primaryModifierHeld(event) || event.button !== 0) {
     return;
   }
   openUrl(uri).catch((error: unknown) => {

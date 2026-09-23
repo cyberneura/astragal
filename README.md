@@ -1,6 +1,6 @@
 # Astragal
 
-A lightweight terminal app for macOS (Tauri 2.x + xterm.js).
+A lightweight terminal app for macOS and Windows (Tauri 2.x + xterm.js).
 
 - A main window with tabs. Hiding a window with no tabs left and showing it again
   opens a fresh tab, in both the main window and the popover
@@ -23,12 +23,56 @@ A lightweight terminal app for macOS (Tauri 2.x + xterm.js).
 
 ## Install
 
+### macOS
+
 ```shell
 brew install --cask cyberneura/tap/astragal
 ```
 
 Releases are universal `.dmg` files (Intel / Apple Silicon), signed with a Developer ID
 and notarized.
+
+### Windows
+
+Get the latest `Astragal_x.y.z_x64-setup.exe` from the
+[Releases](https://github.com/cyberneura/astragal/releases) page and run it. The
+installer is not code-signed, so SmartScreen warns on first run ("Windows protected
+your PC" → More info → Run anyway). It installs for the current user and needs no
+administrator rights.
+
+Astragal is not on winget yet. See [docs/winget.md](docs/winget.md) for what publishing
+it there takes.
+
+### Windows differences
+
+The shell runs in a ConPTY (Windows 10 1809 or later). Everything above works on Windows
+too, with these differences:
+
+- The default shell is Windows PowerShell (`powershell.exe`) with no arguments.
+  `$SHELL` is ignored. Set `shell.command` to `pwsh.exe`, `cmd.exe`, `wsl.exe`, etc.
+  to use another one.
+- Shortcuts follow Windows Terminal, since Ctrl alone belongs to the shell:
+
+  | macOS | Windows |
+  |---|---|
+  | Cmd+T / Cmd+N (new tab) | Ctrl+Shift+T / Ctrl+Shift+N |
+  | Cmd+W (close tab) | Ctrl+Shift+W |
+  | Cmd+1 … Cmd+9 (go to tab) | Ctrl+Shift+1 … Ctrl+Shift+9 |
+  | Cmd+F (search) | Ctrl+Shift+F |
+  | Cmd+G / Cmd+Shift+G (next / previous match) | F3 / Shift+F3 (while the search bar is open) |
+  | Cmd+= / Cmd+- / Cmd+0 (font size) | Ctrl+= / Ctrl+- / Ctrl+0 |
+  | Cmd+C / Cmd+V | Ctrl+Shift+C / Ctrl+Shift+V. Ctrl+C copies when text is selected (otherwise it interrupts), Ctrl+V pastes |
+  | Cmd+click a URL | Ctrl+click a URL |
+  | Cmd+Shift+[ / ] (previous / next tab) | Not available; use Ctrl+Tab / Ctrl+Shift+Tab |
+
+- The popover opens from the notification area icon. With the taskbar at the bottom of
+  the screen it opens above the icon.
+- In `hotkeys`, `Command` / `Super` means the Windows key. The defaults
+  (`Control+Option+Command+A` = Ctrl+Alt+Win+A) are kept as they are.
+- The config file lives at `%USERPROFILE%\.config\astragal\config.yaml`.
+- `config_override_command` is split like a POSIX shell command line, so a backslash
+  escapes the next character. Write Windows paths with forward slashes
+  (`C:/tools/op.exe`) or in single quotes. No directories are appended to `PATH`.
 
 ## Configuration
 
@@ -44,8 +88,8 @@ font:
   size: 13
 
 shell:
-  command: /bin/zsh # defaults to $SHELL, then /bin/zsh
-  args: ["-l"] # login shell by default
+  command: /bin/zsh # defaults to $SHELL, then /bin/zsh (powershell.exe on Windows)
+  args: ["-l"] # login shell by default ([] on Windows)
   env:
     LANG: ja_JP.UTF-8
 
@@ -98,7 +142,7 @@ config_override_command: op read "op://development/astragal/config-yaml"
 
 - Mappings are merged recursively; scalars and lists are replaced wholesale.
 - **The command runs without a shell.** It has to be on `PATH` or written as an absolute
-  path (`/opt/homebrew/bin` and `/usr/local/bin` are appended to `PATH`).
+  path (on macOS, `/opt/homebrew/bin` and `/usr/local/bin` are appended to `PATH`).
 - It times out after 60 seconds. If the command fails, Astragal starts with the local
   config and prints the reason in the terminal as a warning.
 
@@ -115,8 +159,9 @@ pnpm tauri dev
 pnpm tauri build
 ```
 
-The build produces `src-tauri/target/release/bundle/macos/Astragal.app`.
-`./astragal` is a CLI wrapper that launches that bundle.
+The build produces `src-tauri/target/release/bundle/macos/Astragal.app` on macOS
+(`./astragal` is a CLI wrapper that launches that bundle) and the NSIS installer under
+`src-tauri/target/release/bundle/nsis/` on Windows (`pnpm tauri build --bundles nsis`).
 
 ## Release
 
@@ -133,8 +178,11 @@ pnpm release major
 ```
 
 `scripts/release.sh` only runs when `main` is clean and matches `origin/main`. The build
-runs on a macOS runner, goes through Developer ID signing and notarization, and uploads
-the universal `.dmg` to the Release for the `v<version>` tag. The signing secrets
+runs on macOS and Windows runners in parallel. The macOS job goes through Developer ID
+signing and notarization and uploads the universal `.dmg`; the Windows job uploads the
+unsigned NSIS installer (`*_x64-setup.exe`). Both go into one draft Release for the
+`v<version>` tag, which is published only after both succeed. Pull requests run the
+tests on both macOS and Windows. The signing secrets
 (`APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` / `APPLE_SIGNING_IDENTITY` /
 `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID`) are already registered on the
 repository, and the build fails up front if any one of them is missing (if it went ahead

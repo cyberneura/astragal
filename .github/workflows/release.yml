@@ -42,7 +42,7 @@ concurrency:
 
 jobs:
   # ビルドに時間をかける前に、その version がまだリリースされていないことだけを
-  # 確かめる。ここが false を返す限り、push のたびに macOS ランナーが動くことはない。
+  # 確かめる。ここが false を返す限り、push のたびに macOS / Windows ランナーが動くことはない。
   # PR ではリリース判定そのものが無意味なので走らせない。この job が skipped に
   # なると、依存している build / publish も (always() を使っていないので) skipped に
   # なる — PR では test だけが動く。
@@ -115,9 +115,10 @@ jobs:
   # リリースビルドの門番。方針: cyberneura/cyberneura-github-actions の
   # docs/build-requires-tests.md
   #
-  # runs-on を build と同じ macOS にしてあるのは方針のルール 4 による。lib.rs の
-  # トレイ・ホットキー・ウインドウ配置は macOS の API を前提にしており、ubuntu で
-  # cargo test を回しても配布物に入るコードを検査したことにならない。
+  # runs-on を build と同じ macOS / Windows にしてあるのは方針のルール 4 による。
+  # lib.rs のトレイ・ホットキー・ウインドウ配置と pty (Windows は ConPTY) は OS ごとに
+  # 実装が違い、ubuntu で cargo test を回しても配布物に入るコードを検査したことに
+  # ならない。
   test:
     # push / dispatch では、実際にリリースする version の時だけ走らせる。plan を
     # 通さず無条件に走らせると、リリースを伴わない main への push のたびに macOS
@@ -131,7 +132,11 @@ jobs:
           && (github.event_name == 'pull_request'
               || (needs.plan.result == 'success'
                   && needs.plan.outputs.release == 'true')) }}
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.platform }}
     timeout-minutes: 45
     permissions:
       contents: read
@@ -176,15 +181,91 @@ jobs:
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+  # matrix の全ジョブが成果物を上げる先の draft Release を、ビルドの前に 1 つだけ用意する。
+  #
+  # tauri-action に tagName だけを渡すと、各ジョブがビルド後に「その tag の Release を
+  # 一覧から探し、無ければ作る」。macOS と Windows のビルドがほぼ同時に終わると両方が
+  # 「無い」と判断し、同じ tag の draft が 2 つできる。publish はそのうち片方しか公開
+  # できず、もう片方のプラットフォームの成果物が Release から欠ける。ここで作った id を
+  # releaseId で渡せば、tauri-action は探しも作りもせずそこへ上げる
+  # (queryfolio / flashcap の release.yml と同じ構成。CYBERNEURA-DEV-771)。
+  #
+  # 失敗した run が残した draft は再利用し、target_commitish をこの run の commit に
+  # 直す (draft を最初に作った run の commit のまま公開すると、tag が中身と食い違う)。
+  draft:
+    # test を通らないうちは draft を作らない (失敗するたびに空の draft が残るため)。
+    needs: [plan, test]
+    if: github.event_name != 'pull_request' && needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.draft.outputs.release_id }}
+    steps:
+      - name: Find or create the draft release
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: v${{ needs.plan.outputs.version }}
+        run: |
+          # draft は tag からは引けない (releases/tags/<tag> は 404 を返す) ので一覧から探す。
+          # contents: write のトークンなら一覧に draft も含まれる。
+          found=$(gh api --paginate "repos/${GH_REPO}/releases?per_page=100" \
+            --jq '.[] | select(.tag_name == env.TAG) | "\(.id) \(.draft)"')
+          published=$(printf '%s\n' "$found" | awk '$2 == "false" { n++ } END { print n + 0 }')
+          drafts=$(printf '%s\n' "$found" | awk '$2 == "true" { print $1 }')
+          draft_count=$(printf '%s\n' "$found" | awk '$2 == "true" { n++ } END { print n + 0 }')
+          if [ "$published" -gt 0 ]; then
+            echo "::error::${TAG} is already published, but plan decided to release it. Not touching it."
+            exit 1
+          fi
+          # どれに上げるべきかを決められない。黙って 1 つ選ぶと、残りの draft と成果物が
+          # 分かれたまま公開される。不要な draft を消してから再実行する。
+          if [ "$draft_count" -gt 1 ]; then
+            echo "::error::found ${draft_count} draft releases for ${TAG} (ids: $(echo $drafts)). Delete all but one, then re-run."
+            exit 1
+          fi
+          if [ "$draft_count" -eq 1 ]; then
+            id="$drafts"
+            # 名前と prerelease も作成時と同じ値に揃える (手で触られた draft をそのまま公開しない)
+            gh api -X PATCH "repos/${GH_REPO}/releases/${id}" \
+              -f name="Astragal ${TAG}" -F prerelease=false \
+              -f target_commitish="${GITHUB_SHA}" --silent
+            echo "Reusing draft ${id} for ${TAG} (target set to ${GITHUB_SHA})."
+          else
+            id=$(gh api -X POST "repos/${GH_REPO}/releases" \
+              -f tag_name="${TAG}" -f name="Astragal ${TAG}" \
+              -F draft=true -F prerelease=false \
+              -f target_commitish="${GITHUB_SHA}" --jq '.id')
+            echo "Created draft ${id} for ${TAG}."
+          fi
+          if ! [[ "$id" =~ ^[0-9]+$ ]]; then
+            echo "::error::could not get the id of the draft release for ${TAG} (got '${id}')."
+            exit 1
+          fi
+          echo "release_id=$id" >> "$GITHUB_OUTPUT"
+
   build:
     # test を通らずにビルドしない。needs は同じ run の job にしか効かないので、
     # テストを別 workflow に切り出さないこと。
-    needs: [plan, test]
-    if: needs.plan.outputs.release == 'true'
-    # Intel / Apple Silicon 両対応の universal バイナリを dmg で配布する。
-    # Astragal は macOS 専用アプリ (トレイ・グローバルホットキー・pty) なので
-    # 他のプラットフォームはビルドしない。
-    runs-on: macos-latest
+    needs: [plan, test, draft]
+    # PR では成果物を作らない (Apple の証明書を PR のコードに触らせないためでもある)。
+    if: github.event_name != 'pull_request' && needs.plan.outputs.release == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Intel / Apple Silicon 両対応の universal dmg。Developer ID 署名 + 公証。
+          - platform: macos-latest
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin --bundles dmg
+          # Windows は署名なしの NSIS インストーラー (.exe) のみ。MSI は作らない。
+          - platform: windows-latest
+            rust-targets: ''
+            args: --bundles nsis
+    runs-on: ${{ matrix.platform }}
     # Rust キャッシュが空の状態での universal (2 アーキ) ビルドに加えて、Apple の
     # 公証サービス待ちが読めないので長めに取る。ハングした時の上限であって通常は
     # ここまで使わない。
@@ -223,7 +304,7 @@ jobs:
         uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
           toolchain: stable
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: ${{ matrix.rust-targets }}
 
       - name: Cache Rust (cargo + target)
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -238,6 +319,7 @@ jobs:
       # 見ないため、そのまま「署名 + 公証済み」のつもりで公開される。ここで明示的に
       # 落として、配布不能な dmg が公開されるのを防ぐ。
       - name: Check macOS signing secrets
+        if: matrix.platform == 'macos-latest'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -263,6 +345,7 @@ jobs:
       # 証明書をインポートしないため、ビルド前にこのステップで用意しておく。
       # keychain のパスワードは使い捨てなので Secret にせずその場で生成する。
       - name: Import Apple Developer certificate
+        if: matrix.platform == 'macos-latest'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -291,31 +374,32 @@ jobs:
           }
           rm "$RUNNER_TEMP/certificate.p12"
 
-      # tauri.conf.json の version から v<version> タグの Release を作成し、
-      # ビルド成果物をアップロードする。ビルドが途中で失敗しても不完全な Release が
-      # 公開されないよう draft で作成し、成功後に publish ジョブで公開する。
-      # APPLE_* を渡すと tauri-action が Developer ID 署名 + 公証 + staple を行う。
+      # draft ジョブが用意した draft Release (releaseId) にビルド成果物をアップロードする。
+      # ビルドが途中で失敗しても不完全な Release が公開されないよう、全プラットフォームの
+      # 成功後に publish ジョブで公開する。releaseId を渡すと tauri-action は Release を
+      # 探しも作りもしないので、tagName / releaseName / releaseDraft は渡さない
+      # (Release の名前と tag は draft ジョブが決める)。再実行では同名の asset を差し替える。
+      # APPLE_* を渡すと tauri-action が Developer ID 署名 + 公証 + staple を行う
+      # (macOS のジョブにだけ渡す。Windows では空文字にして露出させない)。
       # Apple 認証情報を受け取るため、可変タグ @v0 ではなく commit SHA に固定する
       # (タグが差し替えられて secrets を抜かれるサプライチェーン攻撃を防ぐ)。
       - name: Build and upload to GitHub Release (draft)
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_SIGNING_IDENTITY: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_ID: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_TEAM_ID || '' }}
         with:
           # tauri CLI を直接叩き、package.json の "tauri" スクリプトを迂回する。
           # スクリプト側に署名 identity を書く運用になった時に、env で渡した Secret が
           # インライン代入で上書きされるのを防ぐ (シェルのインライン代入は継承した
           # env より優先される)。
+          # (インラインの env 代入は Windows のシェルでは構文エラーにもなる)
           tauriScript: pnpm exec tauri
-          tagName: v__VERSION__
-          releaseName: Astragal v__VERSION__
-          releaseDraft: true
-          prerelease: false
-          args: --target universal-apple-darwin --bundles dmg
+          releaseId: ${{ needs.draft.outputs.release_id }}
+          args: ${{ matrix.args }}
 
   # ビルド・アップロードが成功した時のみ draft を公開する。
   # 失敗した場合は draft のまま残る (不完全な Release は公開されない)。

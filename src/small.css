@@ -49,6 +49,20 @@ body {
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 8%);
 }
 
+/* アイコンの上に出した時 (Windows でタスクバーが下端にある時)。ツノを下辺へ移して
+   下向きにする */
+.popover-above #app {
+  padding-top: 0;
+  padding-bottom: var(--arrow-height);
+}
+
+.popover-above #arrow {
+  top: auto;
+  bottom: 0;
+  border-bottom: none;
+  border-top: var(--arrow-height) solid var(--terminal-background);
+}
+
 /* 信号機ボタンもタイトルも無いので、左端から詰める */
 #tab-bar {
   padding-left: 8px;

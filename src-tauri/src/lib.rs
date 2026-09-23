@@ -6,7 +6,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
@@ -37,16 +37,42 @@ struct AppState {
     /// 自分から hide() した時に飛んでくる blur を、記録から除くための印。
     suppress_blur_record: AtomicBool,
     /// 最後に送ったツノの位置。フロントの購読が間に合わなかった時に送り直す。
-    last_arrow_x: Mutex<Option<f64>>,
+    last_anchor: Mutex<Option<PopoverAnchor>>,
 }
 
-/// トレイアイコンの中心 x と下端 y (グローバル論理ポイント)
+/// トレイアイコンの中心 x と上端・下端 y (グローバル論理ポイント)
 #[derive(Debug, Clone, Copy)]
 struct TrayAnchor {
     center_x: f64,
+    top: f64,
     bottom: f64,
 }
 
+/// 吹き出しをトレイアイコンのどちら側に出したか。ツノの向きを front に伝える。
+///
+/// macOS のメニューバーは画面の上端にあるので常に `Below`。Windows のタスクバーは
+/// 既定で下端にあり、その場合はアイコンの上に出す (下に出すと画面外へはみ出す)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum PopoverSide {
+    Below,
+    Above,
+}
+
+/// 吹き出しの位置とツノの位置。表示のたびに front へ送り、取りこぼした時は送り直す。
+#[derive(Debug, Clone, Copy, Serialize)]
+struct PopoverAnchor {
+    /// ウインドウ左端からトレイアイコン中心までの距離 (論理ピクセル)
+    arrow_x: f64,
+    /// ツノを出す辺。`Below` なら上辺、`Above` なら下辺
+    side: PopoverSide,
+}
+
+/// Windows でシェルの終了を知らせる前に、出力が途切れていることを求める時間。
+/// 読み出しスレッドがこの時間何も送っていなければ、残りの出力は送り終えたとみなす
+const EXIT_OUTPUT_QUIET: Duration = Duration::from_millis(200);
+/// 出力が途切れなくても終了を知らせるまでの上限 (終了後も出力を続ける孫プロセス対策)
+const EXIT_DRAIN_LIMIT: Duration = Duration::from_secs(5);
 /// トレイアイコンの位置が取れない時に使うメニューバーの高さ (論理ピクセル)
 const MENU_BAR_HEIGHT: f64 = 24.0;
 /// 画面端に張り付かせない余白 (論理ピクセル)
@@ -88,13 +114,25 @@ fn get_config(app: AppHandle) -> FrontendConfig {
         font: loaded.config.font.clone(),
         terminal: loaded.config.terminal.clone(),
         theme: loaded.config.theme.clone(),
-        shell_name: shell
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "shell".to_string()),
+        shell_name: shell_label(&shell),
         config_path: loaded.path.display().to_string(),
         warning: (!warnings.is_empty()).then(|| warnings.join("\n")),
     }
+}
+
+/// タブのラベルに使う、起動するコマンドの名前。Windows の実行ファイルは `.exe` を
+/// 落とす (`powershell.exe 1` より `powershell 1` の方が読みやすい)。
+fn shell_label(shell: &std::path::Path) -> String {
+    let is_exe = shell
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"));
+    let name = if is_exe {
+        shell.file_stem()
+    } else {
+        shell.file_name()
+    };
+    name.map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "shell".to_string())
 }
 
 fn shell_command(shell: &config::ShellConfig) -> CommandBuilder {
@@ -158,6 +196,10 @@ fn create_terminal(app: AppHandle, window: WebviewWindow) -> Result<u32, String>
     // 出力は pty を作ったウインドウにだけ送る。全ウインドウへブロードキャストすると、
     // もう一方は自分の知らない tab_id の出力を溜め続ける (捨てる術が無い)。
     let label = window.label().to_string();
+    // 最後に出力を送った時刻。Windows で終了を知らせる前に、出力が途切れたことを
+    // 確かめるのに使う (spawn_exit_waiter)
+    let last_output = Arc::new(Mutex::new(Instant::now()));
+    let last_output_reader = Arc::clone(&last_output);
 
     // Spawn reader thread: read from pty and send to frontend via events
     std::thread::spawn(move || {
@@ -175,6 +217,9 @@ fn create_terminal(app: AppHandle, window: WebviewWindow) -> Result<u32, String>
                             "data": encoded,
                         }),
                     );
+                    if let Ok(mut last) = last_output_reader.lock() {
+                        *last = Instant::now();
+                    }
                 }
                 Ok(_) => {
                     // EOF
@@ -195,6 +240,25 @@ fn create_terminal(app: AppHandle, window: WebviewWindow) -> Result<u32, String>
         }
     });
 
+    // Windows の ConPTY は、シェルが終了しても疑似コンソールを閉じるまで出力の
+    // パイプを閉じない (portable-pty の ClosePseudoConsole は master の drop で走る)。
+    // 読み出しスレッドの EOF を終了の合図にしていると、exit したタブが永久に残る。
+    // Windows では子の終了を別スレッドで待って、そちらから終了を知らせる。
+    // Unix は従来どおり EOF で知らせる (両方から送ると終了が 2 回届く)。
+    let child: Box<dyn ChildKiller + Send> = if cfg!(windows) {
+        let killer = child.clone_killer();
+        spawn_exit_waiter(
+            child,
+            app.clone(),
+            window.label().to_string(),
+            tab_id,
+            last_output,
+        );
+        killer
+    } else {
+        child
+    };
+
     let session = PtySession {
         master: pair.master,
         writer: Mutex::new(writer),
@@ -209,6 +273,58 @@ fn create_terminal(app: AppHandle, window: WebviewWindow) -> Result<u32, String>
     }
 
     Ok(tab_id)
+}
+
+/// 子プロセスの終了を待ち、終了を front に知らせる (Windows 用。上の説明を参照)。
+///
+/// 終了の直前に出た出力は、まだ読み出しスレッドが送っている途中のことがある。
+/// 固定時間だけ待つと大量の出力の末尾より先に終了が届くので、読み出しスレッドが
+/// `EXIT_OUTPUT_QUIET` の間なにも送らなくなるまで待つ。同じウインドウへの emit は
+/// 送った順に届くので、`[Process exited]` や close_on_exit によるタブの破棄が
+/// 最後の出力より先に来ない。
+fn spawn_exit_waiter(
+    mut child: Box<dyn portable_pty::Child + Send + Sync>,
+    app: AppHandle,
+    label: String,
+    tab_id: u32,
+    last_output: Arc<Mutex<Instant>>,
+) {
+    std::thread::spawn(move || {
+        if let Err(e) = child.wait() {
+            eprintln!("astragal: failed to wait for the shell of tab {tab_id}: {e}");
+            return;
+        }
+        let exited_at = Instant::now();
+        loop {
+            // 静かな時間は子の終了時点から数え始める。終了前に長く黙っていたシェルが
+            // 最後に 1 行だけ書いて終わった時、その出力を読み出しスレッドが送る前に
+            // 「もう静か」と判断しないため
+            let since_output = last_output
+                .lock()
+                .map(|last| last.elapsed())
+                .unwrap_or(EXIT_OUTPUT_QUIET);
+            let idle = since_output.min(exited_at.elapsed());
+            match exit_notice_wait(idle, exited_at.elapsed()) {
+                None => break,
+                Some(wait) => std::thread::sleep(wait),
+            }
+        }
+        let _ = app.emit_to(
+            label.as_str(),
+            "terminal-exit",
+            serde_json::json!({ "tab_id": tab_id }),
+        );
+    });
+}
+
+/// 終了を知らせる前にあとどれだけ待つか。`None` なら今すぐ知らせる。
+///
+/// `idle` は最後に出力を送ってからの時間、`waited` は子の終了からの時間。
+fn exit_notice_wait(idle: Duration, waited: Duration) -> Option<Duration> {
+    if idle >= EXIT_OUTPUT_QUIET || waited >= EXIT_DRAIN_LIMIT {
+        return None;
+    }
+    Some((EXIT_OUTPUT_QUIET - idle).min(EXIT_DRAIN_LIMIT - waited))
 }
 
 #[tauri::command]
@@ -396,25 +512,24 @@ fn toggle_small_window(app: AppHandle, from_tray_click: bool) -> Result<(), Stri
     // 吹き出しのツノをトレイアイコンの真下に合わせる。位置は画面端で
     // クランプするので、ウインドウ左端からのオフセットを front に渡す。
     // 位置決めに失敗しても、ウインドウ自体は出す (出ない方が困る)。
-    let arrow_x = anchor_small_window(&app, &win).unwrap_or_else(|e| {
+    let anchor = anchor_small_window(&app, &win).unwrap_or_else(|e| {
         eprintln!("astragal: failed to anchor the small window: {e}");
         // 位置決めに失敗してもツノは出す。出ないままだと吹き出しに見えない。
-        app.state::<AppState>().config.config.small_window().width / 2.0
+        PopoverAnchor {
+            arrow_x: app.state::<AppState>().config.config.small_window().width / 2.0,
+            side: PopoverSide::Below,
+        }
     });
-    if let Ok(mut last) = app.state::<AppState>().last_arrow_x.lock() {
-        *last = Some(arrow_x);
+    if let Ok(mut last) = app.state::<AppState>().last_anchor.lock() {
+        *last = Some(anchor);
     }
-    emit_anchor(&app, arrow_x);
+    emit_anchor(&app, anchor);
 
     present_window(&win)
 }
 
-fn emit_anchor(app: &AppHandle, arrow_x: f64) {
-    let _ = app.emit_to(
-        "small",
-        "small-window-anchor",
-        serde_json::json!({ "arrow_x": arrow_x }),
-    );
+fn emit_anchor(app: &AppHandle, anchor: PopoverAnchor) {
+    let _ = app.emit_to("small", "small-window-anchor", anchor);
 }
 
 /// 表示中のツノの位置を送り直す。
@@ -431,11 +546,11 @@ fn request_small_anchor(app: AppHandle) -> Result<(), String> {
     }
     let last = *app
         .state::<AppState>()
-        .last_arrow_x
+        .last_anchor
         .lock()
         .map_err(|e| e.to_string())?;
-    if let Some(arrow_x) = last {
-        emit_anchor(&app, arrow_x);
+    if let Some(anchor) = last {
+        emit_anchor(&app, anchor);
     }
     Ok(())
 }
@@ -479,13 +594,15 @@ fn consume_recent_blur_hide(app: &AppHandle) -> bool {
         .is_some_and(|at| at.elapsed() < BLUR_HIDE_GUARD)
 }
 
-/// メニューバーのトレイアイコンの真下にウインドウを置き、ウインドウ左端から
-/// アイコン中心までの距離 (論理ピクセル) を返す。
-fn anchor_small_window(app: &AppHandle, win: &WebviewWindow) -> Result<f64, String> {
+/// トレイアイコンの真下 (Windows でタスクバーが下端にある時は真上) にウインドウを
+/// 置き、ツノの位置と向きを返す。
+fn anchor_small_window(app: &AppHandle, win: &WebviewWindow) -> Result<PopoverAnchor, String> {
     // outer_size は「今ウインドウが載っているモニタ」の物理値。移動先のスケールが
     // 違うと物理幅も変わるので、論理幅に戻してから使う。
     let current_scale = win.scale_factor().map_err(|e| e.to_string())?;
-    let logical_width = win.outer_size().map_err(|e| e.to_string())?.width as f64 / current_scale;
+    let outer_size = win.outer_size().map_err(|e| e.to_string())?;
+    let logical_width = outer_size.width as f64 / current_scale;
+    let logical_height = outer_size.height as f64 / current_scale;
 
     let stored = *app
         .state::<AppState>()
@@ -495,19 +612,9 @@ fn anchor_small_window(app: &AppHandle, win: &WebviewWindow) -> Result<f64, Stri
 
     let anchor = match stored {
         Some(anchor) => anchor,
-        // トレイのイベントを一度も受けていない時のフォールバック。
-        None => {
-            let primary = app.primary_monitor().ok().flatten();
-            TrayAnchor {
-                center_x: primary
-                    .as_ref()
-                    .map(|m| {
-                        (m.position().x as f64 + m.size().width as f64 / 2.0) / m.scale_factor()
-                    })
-                    .unwrap_or(logical_width / 2.0),
-                bottom: MENU_BAR_HEIGHT,
-            }
-        }
+        // トレイのイベントを一度も受けていない時 (ホットキーやメニューから先に
+        // 開いた時) のフォールバック。
+        None => fallback_tray_anchor(app, logical_width),
     };
 
     // メニューバーはアクティブなディスプレイに出るので、アイコンが乗っている
@@ -516,6 +623,8 @@ fn anchor_small_window(app: &AppHandle, win: &WebviewWindow) -> Result<f64, Stri
     let monitor = monitor_containing(app, &anchor);
 
     let mut x = anchor.center_x - logical_width / 2.0;
+    let mut side = PopoverSide::Below;
+    let mut y = anchor.bottom;
     if let Some(monitor) = &monitor {
         let scale = monitor.scale_factor();
         let monitor_left = monitor.position().x as f64 / scale;
@@ -525,13 +634,118 @@ fn anchor_small_window(app: &AppHandle, win: &WebviewWindow) -> Result<f64, Stri
         if right >= left {
             x = x.clamp(left, right);
         }
+        let monitor_top = monitor.position().y as f64 / scale;
+        let monitor_height = monitor.size().height as f64 / scale;
+        (y, side) = popover_y(&anchor, monitor_top, monitor_height, logical_height);
     }
 
     // 物理のまま渡すと、tao が「移動元ウインドウの scale」で論理化するため、
     // スケールの違うモニタへ動かす時にずれる。論理座標で渡して換算を挟ませない。
-    win.set_position(LogicalPosition::new(x, anchor.bottom))
+    win.set_position(LogicalPosition::new(x, y))
         .map_err(|e| e.to_string())?;
-    Ok(anchor.center_x - x)
+    Ok(PopoverAnchor {
+        arrow_x: anchor.center_x - x,
+        side,
+    })
+}
+
+/// 論理座標の矩形
+#[derive(Debug, Clone, Copy)]
+struct LogicalRect {
+    left: f64,
+    top: f64,
+    right: f64,
+    bottom: f64,
+}
+
+/// Windows の通知領域のアイコンの位置 (center_x, y) を、モニタと作業領域の差から推測する。
+///
+/// 作業領域から外れている辺がタスクバーのある辺。通知領域は横置きなら右端、
+/// 縦置き (左右) なら下端にある。center_x はアイコンの推定位置そのもので、
+/// ウインドウの配置は anchor_small_window の画面端クランプに任せる (ここで幅の半分を
+/// 引くと、ツノがアイコンから離れる)。
+fn windows_tray_guess(monitor: &LogicalRect, work_area: &LogicalRect) -> (f64, f64) {
+    if work_area.left > monitor.left {
+        // 左の縦置き: タスクバーの幅の中央、作業領域の下端
+        ((monitor.left + work_area.left) / 2.0, work_area.bottom)
+    } else if work_area.right < monitor.right {
+        // 右の縦置き
+        ((work_area.right + monitor.right) / 2.0, work_area.bottom)
+    } else if work_area.top > monitor.top {
+        // 上端: 通知領域は右端、タスクバーの下端 (= 作業領域の上端)
+        (work_area.right - SCREEN_EDGE_MARGIN, work_area.top)
+    } else {
+        // 下端 (既定)。自動的に隠す設定で作業領域がモニタ全体の時もここに来る
+        (work_area.right - SCREEN_EDGE_MARGIN, work_area.bottom)
+    }
+}
+
+/// 吹き出しの上端 y と、アイコンのどちら側に出すか。
+///
+/// アイコンがモニタの下半分にある時 (Windows のタスクバーが下端にある既定の配置) は
+/// アイコンの上に出す。macOS のメニューバーは常に上端なので、従来どおり下に出る。
+/// 上に出して画面の上端を越える時は、上端に揃える (タイトルバーの無いウインドウが
+/// 画面外に出ると戻せない)。
+fn popover_y(
+    anchor: &TrayAnchor,
+    monitor_top: f64,
+    monitor_height: f64,
+    window_height: f64,
+) -> (f64, PopoverSide) {
+    let middle = monitor_top + monitor_height / 2.0;
+    if anchor.top < middle {
+        return (anchor.bottom, PopoverSide::Below);
+    }
+    let y = (anchor.top - window_height).max(monitor_top + SCREEN_EDGE_MARGIN);
+    (y, PopoverSide::Above)
+}
+
+/// トレイの位置が分からない時の仮のアンカー。
+///
+/// macOS はメニューバー (primary の上端中央) に置く。Windows はタスクバーの位置を
+/// primary の作業領域 (タスクバーを除いた矩形) から推測する (windows_tray_guess)。
+/// あくまで推測で、トレイのイベントを一度受ければ実際のアイコンの位置に置き直される。
+fn fallback_tray_anchor(app: &AppHandle, logical_width: f64) -> TrayAnchor {
+    let Some(primary) = app.primary_monitor().ok().flatten() else {
+        return TrayAnchor {
+            center_x: logical_width / 2.0,
+            top: 0.0,
+            bottom: MENU_BAR_HEIGHT,
+        };
+    };
+    let scale = primary.scale_factor();
+    if cfg!(windows) {
+        let area = primary.work_area();
+        let logical = |x: i32, y: i32, w: u32, h: u32| LogicalRect {
+            left: x as f64 / scale,
+            top: y as f64 / scale,
+            right: (x as f64 + w as f64) / scale,
+            bottom: (y as f64 + h as f64) / scale,
+        };
+        let monitor = logical(
+            primary.position().x,
+            primary.position().y,
+            primary.size().width,
+            primary.size().height,
+        );
+        let work_area = logical(
+            area.position.x,
+            area.position.y,
+            area.size.width,
+            area.size.height,
+        );
+        let (center_x, y) = windows_tray_guess(&monitor, &work_area);
+        return TrayAnchor {
+            center_x,
+            top: y,
+            bottom: y,
+        };
+    }
+    TrayAnchor {
+        center_x: (primary.position().x as f64 + primary.size().width as f64 / 2.0) / scale,
+        top: primary.position().y as f64 / scale,
+        bottom: primary.position().y as f64 / scale + MENU_BAR_HEIGHT,
+    }
 }
 
 #[tauri::command]
@@ -571,9 +785,9 @@ fn app_info(app: AppHandle) -> AppInfo {
     AppInfo {
         name: info.name.clone(),
         version: info.version.to_string(),
-        description: "A compact, lightweight terminal app for macOS. \
-            It lives in the menu bar, with a tabbed main window and a small popover \
-            terminal that drops down from the tray icon.",
+        description: "A compact, lightweight terminal app for macOS and Windows. \
+            It lives in the menu bar (the notification area on Windows), with a tabbed \
+            main window and a small popover terminal that opens from the tray icon.",
         repository_url: "https://github.com/cyberneura/astragal",
         vendor_name: "Cyberneura",
         vendor_url: "https://www.cyberneura.com",
@@ -839,6 +1053,7 @@ fn tray_anchor(
     let size = rect.size.to_physical::<f64>(scale);
     Some(TrayAnchor {
         center_x: (position.x + size.width / 2.0) / scale,
+        top: position.y / scale,
         bottom: (position.y + size.height) / scale,
     })
 }
@@ -946,7 +1161,7 @@ pub fn run() {
             tray_anchor: Mutex::new(None),
             blur_hidden_at: Mutex::new(None),
             suppress_blur_record: AtomicBool::new(false),
-            last_arrow_x: Mutex::new(None),
+            last_anchor: Mutex::new(None),
         })
         .setup(move |app| {
             // Dock に出さない。メニューバー常駐が主で、Dock アイコンから起動する
@@ -1041,6 +1256,7 @@ mod tests {
         // 先に一致した primary を引いて吹き出しが別画面に出ていた。
         let anchor = TrayAnchor {
             center_x: 1612.0,
+            top: 0.0,
             bottom: 24.0,
         };
 
@@ -1054,6 +1270,7 @@ mod tests {
         // Arrange
         let anchor = TrayAnchor {
             center_x: 1400.0,
+            top: 0.0,
             bottom: 24.0,
         };
 
@@ -1068,10 +1285,12 @@ mod tests {
         // primary の論理幅は 1512。右端そのものは外部ディスプレイの領域。
         let edge = TrayAnchor {
             center_x: 1512.0,
+            top: 0.0,
             bottom: 24.0,
         };
         let inside = TrayAnchor {
             center_x: 1511.0,
+            top: 0.0,
             bottom: 24.0,
         };
 
@@ -1088,6 +1307,7 @@ mod tests {
         // 論理 y=1000 も 1964 未満なので内側と判定されていた。
         let anchor = TrayAnchor {
             center_x: 700.0,
+            top: 976.0,
             bottom: 1000.0,
         };
 
@@ -1134,6 +1354,144 @@ mod tests {
         // Act / Assert
         assert!(cursor_is_stable(captured, 1.0, (1616.0, 14.0)));
         assert!(!cursor_is_stable(captured, 1.0, (1640.0, 12.0)));
+    }
+
+    #[test]
+    fn popover_drops_below_a_menu_bar_icon() {
+        // Arrange
+        // macOS のメニューバー (primary の上端) のアイコン
+        let anchor = TrayAnchor {
+            center_x: 1400.0,
+            top: 0.0,
+            bottom: 24.0,
+        };
+
+        // Act
+        let (y, side) = popover_y(&anchor, 0.0, 982.0, 600.0);
+
+        // Assert
+        assert_eq!(side, PopoverSide::Below);
+        assert_eq!(y, 24.0);
+    }
+
+    #[test]
+    fn popover_rises_above_a_taskbar_icon() {
+        // Arrange
+        // Windows のタスクバー (下端、高さ 48) の通知領域のアイコン。論理 1920x1080
+        let anchor = TrayAnchor {
+            center_x: 1800.0,
+            top: 1036.0,
+            bottom: 1060.0,
+        };
+
+        // Act
+        let (y, side) = popover_y(&anchor, 0.0, 1080.0, 600.0);
+
+        // Assert
+        assert_eq!(side, PopoverSide::Above);
+        assert_eq!(y, 436.0);
+    }
+
+    #[test]
+    fn popover_taller_than_the_space_above_stays_on_screen() {
+        // Arrange
+        let anchor = TrayAnchor {
+            center_x: 1800.0,
+            top: 1036.0,
+            bottom: 1060.0,
+        };
+
+        // Act
+        let (y, side) = popover_y(&anchor, 0.0, 1080.0, 1200.0);
+
+        // Assert
+        assert_eq!(side, PopoverSide::Above);
+        assert_eq!(y, SCREEN_EDGE_MARGIN);
+    }
+
+    #[test]
+    fn popover_side_is_sent_in_lowercase() {
+        // Act
+        let json = serde_json::to_value(PopoverAnchor {
+            arrow_x: 12.5,
+            side: PopoverSide::Above,
+        })
+        .expect("should serialize");
+
+        // Assert
+        assert_eq!(
+            json,
+            serde_json::json!({ "arrow_x": 12.5, "side": "above" })
+        );
+    }
+
+    #[test]
+    fn tray_guess_follows_the_taskbar_edge() {
+        // Arrange
+        // 論理 1920x1080 のモニタ。タスクバーの太さは 48 (縦置きは 62)
+        let monitor = LogicalRect {
+            left: 0.0,
+            top: 0.0,
+            right: 1920.0,
+            bottom: 1080.0,
+        };
+        let area = |left, top, right, bottom| LogicalRect {
+            left,
+            top,
+            right,
+            bottom,
+        };
+
+        // Act / Assert
+        assert_eq!(
+            windows_tray_guess(&monitor, &area(0.0, 0.0, 1920.0, 1032.0)),
+            (1920.0 - SCREEN_EDGE_MARGIN, 1032.0)
+        );
+        assert_eq!(
+            windows_tray_guess(&monitor, &area(0.0, 48.0, 1920.0, 1080.0)),
+            (1920.0 - SCREEN_EDGE_MARGIN, 48.0)
+        );
+        assert_eq!(
+            windows_tray_guess(&monitor, &area(62.0, 0.0, 1920.0, 1080.0)),
+            (31.0, 1080.0)
+        );
+        assert_eq!(
+            windows_tray_guess(&monitor, &area(0.0, 0.0, 1858.0, 1080.0)),
+            (1889.0, 1080.0)
+        );
+    }
+
+    #[test]
+    fn exit_notice_waits_until_output_goes_quiet() {
+        // Act / Assert
+        // 出力が途切れていれば、すぐ知らせる
+        assert_eq!(exit_notice_wait(EXIT_OUTPUT_QUIET, Duration::ZERO), None);
+        // まだ出力が流れていれば、途切れるまでの残りだけ待つ
+        assert_eq!(
+            exit_notice_wait(Duration::from_millis(50), Duration::from_secs(1)),
+            Some(EXIT_OUTPUT_QUIET - Duration::from_millis(50))
+        );
+        // 出力が止まらなくても上限で知らせる
+        assert_eq!(exit_notice_wait(Duration::ZERO, EXIT_DRAIN_LIMIT), None);
+        assert_eq!(
+            exit_notice_wait(Duration::ZERO, EXIT_DRAIN_LIMIT - Duration::from_millis(10)),
+            Some(Duration::from_millis(10))
+        );
+    }
+
+    #[test]
+    fn shell_label_drops_the_exe_extension_only() {
+        // Act / Assert
+        assert_eq!(shell_label(std::path::Path::new("/bin/zsh")), "zsh");
+        assert_eq!(
+            shell_label(std::path::Path::new("powershell.exe")),
+            "powershell"
+        );
+        assert_eq!(shell_label(std::path::Path::new("PWSH.EXE")), "PWSH");
+        assert_eq!(
+            shell_label(std::path::Path::new("/usr/bin/python3.12")),
+            "python3.12"
+        );
     }
 
     #[test]

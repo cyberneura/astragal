@@ -1,6 +1,7 @@
 import type { Terminal } from "xterm";
 import { SearchAddon } from "xterm-addon-search";
 import type { ISearchOptions } from "xterm-addon-search";
+import { IS_WINDOWS, shortcutLabel } from "./platform";
 import type { Session } from "./terminal";
 
 // ── Terminal Search (Cmd+F) ──────────────────────────────────────────────────
@@ -75,7 +76,7 @@ export function initSearch(container: HTMLElement, activeSession: () => Session 
   input = document.createElement("input");
   input.type = "text";
   input.className = "search-input";
-  input.placeholder = "Find";
+  input.placeholder = IS_WINDOWS ? "Find (Enter / Shift+Enter)" : "Find";
   input.spellcheck = false;
   input.autocomplete = "off";
   input.setAttribute("aria-label", "Find in terminal");
@@ -87,8 +88,8 @@ export function initSearch(container: HTMLElement, activeSession: () => Session 
   bar.append(
     input,
     count,
-    button("↑", "Previous match (⇧⌘G)", () => findInTerminal(-1)),
-    button("↓", "Next match (⌘G)", () => findInTerminal(1)),
+    button("↑", `Previous match (${shortcutLabel("⇧⌘G", "Shift+F3")})`, () => findInTerminal(-1)),
+    button("↓", `Next match (${shortcutLabel("⌘G", "F3")})`, () => findInTerminal(1)),
     button("×", "Close (Esc)", closeSearch),
   );
   container.appendChild(bar);
@@ -109,6 +110,10 @@ function handleInputKeydown(e: KeyboardEvent): void {
     e.preventDefault();
     findInTerminal(e.shiftKey ? -1 : 1);
   }
+}
+
+export function isSearchOpen(): boolean {
+  return bar !== undefined && !bar.hidden;
 }
 
 /**

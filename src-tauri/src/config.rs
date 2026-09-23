@@ -22,8 +22,15 @@ const OVERRIDE_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 const CONFIG_PATH_ENV: &str = "ASTRAGAL_CONFIG";
 
 /// Nerd Font には CJK グリフが無いため、フォールバックに CJK フォントを置く。
-const DEFAULT_FONT_FAMILY: &str =
-    "'RobotoMono Nerd Font', 'Roboto Mono', Menlo, 'Hiragino Sans', monospace";
+/// Menlo / Hiragino Sans は macOS、Cascadia Mono / Consolas / MS Gothic は Windows 用。
+/// 無いフォントは飛ばされるので、両方を 1 本の列に並べている。
+const DEFAULT_FONT_FAMILY: &str = "'RobotoMono Nerd Font', 'Roboto Mono', Menlo, \
+     'Cascadia Mono', Consolas, 'Hiragino Sans', 'MS Gothic', monospace";
+
+/// Windows で shell.command を書かなかった時に起動するシェル。Windows 10 / 11 に
+/// 必ず入っている Windows PowerShell にする (PowerShell 7 の pwsh.exe は別途
+/// インストールが要る)。
+const WINDOWS_DEFAULT_SHELL: &str = "powershell.exe";
 
 const MAIN_WINDOW_DEFAULT: ResolvedWindow = ResolvedWindow {
     width: 900.0,
@@ -49,11 +56,12 @@ const CONFIG_TEMPLATE: &str = r##"# Astragal config file
 #   size: 13
 
 # shell:
-#   # Defaults to $SHELL, then /bin/zsh.
+#   # Defaults to $SHELL, then /bin/zsh. On Windows defaults to powershell.exe
+#   # (for PowerShell 7, write pwsh.exe).
 #   command: /bin/zsh
 #   # Defaults to ["-l"] (login shell). An app launched from the GUI does not
 #   # read .zprofile otherwise, so PATH stays minimal. Use [] to run a
-#   # non-shell command.
+#   # non-shell command. On Windows defaults to [].
 #   args: ["-l"]
 #   # Extra environment for the pty. TERM and LANG can be overridden here too.
 #   env:
@@ -68,6 +76,7 @@ const CONFIG_TEMPLATE: &str = r##"# Astragal config file
 
 # Global hotkeys. Set an empty string to disable one.
 # Modifiers: Control / Option (Alt) / Shift / Command (Cmd, Super).
+# On Windows, Command / Super is the Windows key.
 # hotkeys:
 #   window: "Control+Option+Command+A"
 #   small_window: "Control+Shift+Option+Command+A"
@@ -94,6 +103,8 @@ const CONFIG_TEMPLATE: &str = r##"# Astragal config file
 # that YAML over this file. Mappings are merged recursively; scalars and lists
 # are replaced wholesale.
 # It runs without a shell, so the command must be on PATH or an absolute path.
+# The line is split like a POSIX shell, so on Windows write paths with forward
+# slashes or in single quotes (a bare backslash escapes the next character).
 #
 # config_override_command: op read "op://development/astragal/config-yaml"
 "##;
@@ -189,7 +200,12 @@ impl Default for ShellConfig {
             command: None,
             // GUI から起動したアプリの環境は最小構成で、ログインシェルとして
             // 起動しないと .zprofile 由来の PATH (Homebrew 等) が入らない。
-            args: vec!["-l".to_string()],
+            // Windows の既定シェル (PowerShell) に -l は無く、渡すと起動に失敗する。
+            args: if cfg!(windows) {
+                Vec::new()
+            } else {
+                vec!["-l".to_string()]
+            },
             env: BTreeMap::new(),
         }
     }
@@ -199,6 +215,11 @@ impl ShellConfig {
     pub fn resolve_command(&self) -> PathBuf {
         if let Some(command) = self.command.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
             return expand_tilde(command);
+        }
+        // Windows では $SHELL を見ない。Git for Windows / MSYS2 の中から起動されると
+        // /usr/bin/bash のような MSYS 側のパスが入っていて、ConPTY からは起動できない。
+        if cfg!(windows) {
+            return PathBuf::from(WINDOWS_DEFAULT_SHELL);
         }
         match std::env::var("SHELL") {
             Ok(shell) if !shell.trim().is_empty() => PathBuf::from(shell),
@@ -548,7 +569,12 @@ fn supplemented_path() -> String {
     supplement_path(&std::env::var("PATH").unwrap_or_default())
 }
 
+/// macOS の GUI アプリの PATH に Homebrew の定番パスを足す。Windows では PATH の
+/// 区切りが `;` で、そもそも GUI アプリもユーザーの PATH を受け継ぐので何もしない。
 fn supplement_path(base: &str) -> String {
+    if cfg!(windows) {
+        return base.to_string();
+    }
     let mut path = base.to_string();
     for extra in ["/opt/homebrew/bin", "/usr/local/bin"] {
         if base.split(':').any(|entry| entry == extra) {
@@ -661,7 +687,13 @@ mod tests {
         // Assert
         assert_eq!(config.font.size, 18.0);
         assert_eq!(config.font.family, DEFAULT_FONT_FAMILY);
-        assert_eq!(config.shell.args, vec!["-l".to_string()]);
+        // Windows の既定シェル (PowerShell) には -l を渡さない
+        let expected_args: Vec<String> = if cfg!(windows) {
+            Vec::new()
+        } else {
+            vec!["-l".to_string()]
+        };
+        assert_eq!(config.shell.args, expected_args);
     }
 
     #[test]
@@ -721,10 +753,16 @@ mod tests {
         let resolved = config.resolve_command();
 
         // Assert
-        let expected = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+        let expected = if cfg!(windows) {
+            WINDOWS_DEFAULT_SHELL.to_string()
+        } else {
+            std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
+        };
         assert_eq!(resolved, PathBuf::from(expected));
     }
 
+    // /bin の Unix コマンドを使う (Windows の CI では走らせない)
+    #[cfg(unix)]
     #[test]
     fn override_command_output_is_merged_over_the_file() {
         // Arrange
@@ -741,6 +779,8 @@ mod tests {
         assert_eq!(font.get("family").and_then(Value::as_str), Some("Menlo"));
     }
 
+    // /bin の Unix コマンドを使う (Windows の CI では走らせない)
+    #[cfg(unix)]
     #[test]
     fn override_command_with_no_output_is_rejected() {
         // Arrange
@@ -753,6 +793,8 @@ mod tests {
         assert!(result.unwrap_err().contains("produced no output"));
     }
 
+    // /bin の Unix コマンドを使う (Windows の CI では走らせない)
+    #[cfg(unix)]
     #[test]
     fn override_command_times_out() {
         // Arrange
@@ -765,6 +807,8 @@ mod tests {
         assert!(result.unwrap_err().contains("timed out"));
     }
 
+    // /bin の Unix コマンドを使う (Windows の CI では走らせない)
+    #[cfg(unix)]
     #[test]
     fn non_utf8_override_output_is_rejected() {
         // Arrange
@@ -777,6 +821,8 @@ mod tests {
         assert!(result.unwrap_err().contains("not valid UTF-8"));
     }
 
+    // /bin の Unix コマンドを使う (Windows の CI では走らせない)
+    #[cfg(unix)]
     #[test]
     fn override_command_times_out_while_reading_output() {
         // Arrange
@@ -793,6 +839,8 @@ mod tests {
         );
     }
 
+    // /bin の Unix コマンドを使う (Windows の CI では走らせない)
+    #[cfg(unix)]
     #[test]
     fn override_command_failure_reports_stderr() {
         // Arrange
@@ -841,6 +889,8 @@ mod tests {
         assert_eq!(config.font.family, DEFAULT_FONT_FAMILY);
     }
 
+    // /bin の Unix コマンドを使う (Windows の CI では走らせない)
+    #[cfg(unix)]
     #[test]
     fn override_command_result_is_applied_to_the_file() {
         // Arrange
@@ -861,6 +911,8 @@ mod tests {
         assert!(warning.is_none(), "unexpected warning: {warning:?}");
     }
 
+    // /bin の Unix コマンドを使う (Windows の CI では走らせない)
+    #[cfg(unix)]
     #[test]
     fn invalid_override_value_keeps_the_local_config() {
         // Arrange
@@ -881,6 +933,8 @@ mod tests {
         assert!(warning.expect("should warn").contains("ignored the override"));
     }
 
+    // /bin の Unix コマンドを使う (Windows の CI では走らせない)
+    #[cfg(unix)]
     #[test]
     fn failing_override_command_keeps_the_local_config() {
         // Arrange
@@ -931,6 +985,8 @@ mod tests {
         assert!(warnings.is_empty(), "{warnings:?}");
     }
 
+    // Windows では PATH を補わない (supplement_path の説明を参照)
+    #[cfg(unix)]
     #[test]
     fn path_is_supplemented_without_duplicates() {
         // Arrange
