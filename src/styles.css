@@ -222,6 +222,81 @@ html, body {
   background: #4d4d4d;
 }
 
+/* ── Search Bar (Cmd+F) ───────────────────────────────────────────────────── */
+
+/* ターミナルの右上に重ねる。#terminals が position: relative */
+#search-bar {
+  position: absolute;
+  top: 6px;
+  right: 14px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 40%);
+}
+
+/* display: flex が hidden 属性の display: none に勝ってしまうので戻す */
+#search-bar[hidden] {
+  display: none;
+}
+
+.search-input {
+  width: 180px;
+  height: 22px;
+  padding: 0 6px;
+  background: #111111;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  color: #e6e6e6;
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+  /* 全体の user-select: none を継ぐと WebKit では入力欄の文字を選択できなくなる */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.search-input:focus {
+  border-color: #4fa8ff;
+}
+
+#search-bar.no-results .search-input {
+  border-color: #ff5f5a;
+}
+
+.search-count {
+  min-width: 64px;
+  padding: 0 6px;
+  color: #9a9a9a;
+  font-size: 11px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.search-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: #9a9a9a;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.search-button:hover {
+  background: #3a3a3a;
+  color: #e6e6e6;
+}
+
 /* ── Startup Error ────────────────────────────────────────────────────────── */
 
 .startup-error,
