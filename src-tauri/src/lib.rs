@@ -650,8 +650,10 @@ fn fallback_tray_anchor(app: &AppHandle, logical_width: f64) -> TrayAnchor {
         } else {
             (area.position.y as f64 + area.size.height as f64) / scale
         };
+        // center_x はアイコンの推定位置そのもの。ウインドウの配置は anchor_small_window の
+        // 画面端クランプに任せる (ここで幅の半分を引くと、ツノがアイコンから離れる)
         return TrayAnchor {
-            center_x: right - SCREEN_EDGE_MARGIN - logical_width / 2.0,
+            center_x: right - SCREEN_EDGE_MARGIN,
             top: y,
             bottom: y,
         };
@@ -700,9 +702,9 @@ fn app_info(app: AppHandle) -> AppInfo {
     AppInfo {
         name: info.name.clone(),
         version: info.version.to_string(),
-        description: "A compact, lightweight terminal app for macOS. \
-            It lives in the menu bar, with a tabbed main window and a small popover \
-            terminal that drops down from the tray icon.",
+        description: "A compact, lightweight terminal app for macOS and Windows. \
+            It lives in the menu bar (the notification area on Windows), with a tabbed \
+            main window and a small popover terminal that opens from the tray icon.",
         repository_url: "https://github.com/cyberneura/astragal",
         vendor_name: "Cyberneura",
         vendor_url: "https://www.cyberneura.com",
