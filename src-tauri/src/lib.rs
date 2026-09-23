@@ -6,7 +6,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
@@ -68,8 +68,11 @@ struct PopoverAnchor {
     side: PopoverSide,
 }
 
-/// Windows でシェルの終了を知らせる前に、残りの出力が届くのを待つ時間
-const EXIT_NOTICE_DELAY: Duration = Duration::from_millis(200);
+/// Windows でシェルの終了を知らせる前に、出力が途切れていることを求める時間。
+/// 読み出しスレッドがこの時間何も送っていなければ、残りの出力は送り終えたとみなす
+const EXIT_OUTPUT_QUIET: Duration = Duration::from_millis(200);
+/// 出力が途切れなくても終了を知らせるまでの上限 (終了後も出力を続ける孫プロセス対策)
+const EXIT_DRAIN_LIMIT: Duration = Duration::from_secs(5);
 /// トレイアイコンの位置が取れない時に使うメニューバーの高さ (論理ピクセル)
 const MENU_BAR_HEIGHT: f64 = 24.0;
 /// 画面端に張り付かせない余白 (論理ピクセル)
@@ -193,6 +196,10 @@ fn create_terminal(app: AppHandle, window: WebviewWindow) -> Result<u32, String>
     // 出力は pty を作ったウインドウにだけ送る。全ウインドウへブロードキャストすると、
     // もう一方は自分の知らない tab_id の出力を溜め続ける (捨てる術が無い)。
     let label = window.label().to_string();
+    // 最後に出力を送った時刻。Windows で終了を知らせる前に、出力が途切れたことを
+    // 確かめるのに使う (spawn_exit_waiter)
+    let last_output = Arc::new(Mutex::new(Instant::now()));
+    let last_output_reader = Arc::clone(&last_output);
 
     // Spawn reader thread: read from pty and send to frontend via events
     std::thread::spawn(move || {
@@ -210,6 +217,9 @@ fn create_terminal(app: AppHandle, window: WebviewWindow) -> Result<u32, String>
                             "data": encoded,
                         }),
                     );
+                    if let Ok(mut last) = last_output_reader.lock() {
+                        *last = Instant::now();
+                    }
                 }
                 Ok(_) => {
                     // EOF
@@ -237,7 +247,13 @@ fn create_terminal(app: AppHandle, window: WebviewWindow) -> Result<u32, String>
     // Unix は従来どおり EOF で知らせる (両方から送ると終了が 2 回届く)。
     let child: Box<dyn ChildKiller + Send> = if cfg!(windows) {
         let killer = child.clone_killer();
-        spawn_exit_waiter(child, app.clone(), window.label().to_string(), tab_id);
+        spawn_exit_waiter(
+            child,
+            app.clone(),
+            window.label().to_string(),
+            tab_id,
+            last_output,
+        );
         killer
     } else {
         child
@@ -262,25 +278,49 @@ fn create_terminal(app: AppHandle, window: WebviewWindow) -> Result<u32, String>
 /// 子プロセスの終了を待ち、終了を front に知らせる (Windows 用。上の説明を参照)。
 ///
 /// 終了の直前に出た出力は、まだ読み出しスレッドが送っている途中のことがある。
-/// 少し待ってから知らせて、`[Process exited]` が最後の出力より先に出ないようにする。
+/// 固定時間だけ待つと大量の出力の末尾より先に終了が届くので、読み出しスレッドが
+/// `EXIT_OUTPUT_QUIET` の間なにも送らなくなるまで待つ。同じウインドウへの emit は
+/// 送った順に届くので、`[Process exited]` や close_on_exit によるタブの破棄が
+/// 最後の出力より先に来ない。
 fn spawn_exit_waiter(
     mut child: Box<dyn portable_pty::Child + Send + Sync>,
     app: AppHandle,
     label: String,
     tab_id: u32,
+    last_output: Arc<Mutex<Instant>>,
 ) {
     std::thread::spawn(move || {
         if let Err(e) = child.wait() {
             eprintln!("astragal: failed to wait for the shell of tab {tab_id}: {e}");
             return;
         }
-        std::thread::sleep(EXIT_NOTICE_DELAY);
+        let exited_at = Instant::now();
+        loop {
+            let idle = last_output
+                .lock()
+                .map(|last| last.elapsed())
+                .unwrap_or(EXIT_OUTPUT_QUIET);
+            match exit_notice_wait(idle, exited_at.elapsed()) {
+                None => break,
+                Some(wait) => std::thread::sleep(wait),
+            }
+        }
         let _ = app.emit_to(
             label.as_str(),
             "terminal-exit",
             serde_json::json!({ "tab_id": tab_id }),
         );
     });
+}
+
+/// 終了を知らせる前にあとどれだけ待つか。`None` なら今すぐ知らせる。
+///
+/// `idle` は最後に出力を送ってからの時間、`waited` は子の終了からの時間。
+fn exit_notice_wait(idle: Duration, waited: Duration) -> Option<Duration> {
+    if idle >= EXIT_OUTPUT_QUIET || waited >= EXIT_DRAIN_LIMIT {
+        return None;
+    }
+    Some((EXIT_OUTPUT_QUIET - idle).min(EXIT_DRAIN_LIMIT - waited))
 }
 
 #[tauri::command]
@@ -1339,6 +1379,24 @@ mod tests {
         assert_eq!(
             json,
             serde_json::json!({ "arrow_x": 12.5, "side": "above" })
+        );
+    }
+
+    #[test]
+    fn exit_notice_waits_until_output_goes_quiet() {
+        // Act / Assert
+        // 出力が途切れていれば、すぐ知らせる
+        assert_eq!(exit_notice_wait(EXIT_OUTPUT_QUIET, Duration::ZERO), None);
+        // まだ出力が流れていれば、途切れるまでの残りだけ待つ
+        assert_eq!(
+            exit_notice_wait(Duration::from_millis(50), Duration::from_secs(1)),
+            Some(EXIT_OUTPUT_QUIET - Duration::from_millis(50))
+        );
+        // 出力が止まらなくても上限で知らせる
+        assert_eq!(exit_notice_wait(Duration::ZERO, EXIT_DRAIN_LIMIT), None);
+        assert_eq!(
+            exit_notice_wait(Duration::ZERO, EXIT_DRAIN_LIMIT - Duration::from_millis(10)),
+            Some(Duration::from_millis(10))
         );
     }
 
