@@ -3,8 +3,10 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Terminal } from "xterm";
 import type { IDisposable, ITheme } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
+import type { SearchAddon } from "xterm-addon-search";
 import { Unicode11Addon } from "xterm-addon-unicode11";
 import { enableLinks } from "./links";
+import { createSearchAddon } from "./search";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -21,6 +23,8 @@ export interface Session {
   id: number;
   terminal: Terminal;
   fitAddon: FitAddon;
+  /** Cmd+F の検索。検索バー (search.ts) から使う */
+  search: SearchAddon;
   /** URL の Cmd+クリックの登録。タブを閉じる時に解除する */
   links: IDisposable;
   closeOnExit: boolean;
@@ -199,6 +203,7 @@ export async function startSession(
 
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
+  const search = createSearchAddon(terminal);
   const links = enableLinks(terminal);
 
   // xterm's built-in width table is Unicode 6, where emoji are one cell wide. The glyph the font
@@ -215,6 +220,7 @@ export async function startSession(
     id,
     terminal,
     fitAddon,
+    search,
     links,
     closeOnExit: config.terminal.close_on_exit,
     userInteracted: false,

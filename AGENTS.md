@@ -24,6 +24,7 @@ public リポジトリなので、**README・UI 文字列・エラーメッセ�
 | `src/terminal.ts` | xterm の生成とテーマ適用 |
 | `src/links.ts` | URL の検出と Cmd+クリックでの起動 |
 | `src/tabs.ts` | タブ管理、Cmd 系キーバインド、Ctrl+Tab のタブ巡回、Cmd+Shift+[ / ] のタブ移動 |
+| `src/search.ts` | Cmd+F の検索バー (xterm-addon-search)。ウインドウに 1 つで、アクティブなタブを検索する |
 | `src/main.ts` / `src/small.ts` | メインウインドウ / 吹き出しの入口 |
 | `src/about.ts` | トレイメニューの About から開くウインドウ |
 | `resources/app-icons/` | アイコンのマスター素材と `generate.py` / `inspect_icns.py` |
@@ -58,6 +59,17 @@ Cmd+Shift+[ / ] は iTerm2 と同じ「表示順で隣のタブへ」。MRU で�
 Option (`altKey`) を弾くのも `code` で判定する側だけ。北欧系の配列は "[" / "]" の入力に
 Option が要る (Option+8 / Option+9) ので、`key` が文字として取れている側で弾くと
 そこから届かなくなる。
+
+Cmd+F / Cmd+G はネイティブメニューのアクセラレータに奪われない (Tauri の既定メニューに
+Find 系の項目が無い)。メニューを足す時に Cmd+F / Cmd+G を割り当てると、WebView まで
+キーが届かなくなり検索が開かなくなる。
+
+検索バーの Esc は入力欄にフォーカスがある時だけ効く。ターミナル側の Esc は vim 等の
+ためにそのまま pty へ流す。
+
+`xterm-addon-search` 0.13 は行テキストのキャッシュをカーソル移動でしか捨てず、
+プロンプトが同じ位置へ戻ると新しい出力が検索に掛からない。`createSearchAddon` が
+書き込みのたびに非公開の `_destroyLinesCache` を呼んで回避している。
 
 ## コマンド
 

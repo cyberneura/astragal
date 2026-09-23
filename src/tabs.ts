@@ -8,6 +8,13 @@ import {
   writeConfigWarning,
 } from "./terminal";
 import type { AppConfig, Session } from "./terminal";
+import {
+  closeSearch,
+  findInTerminal,
+  initSearch,
+  openSearch,
+  syncSearchWithActiveTab,
+} from "./search";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -181,6 +188,7 @@ function showTab(tabId: number): boolean {
     activeTabId = tabId;
     fitLater(tab, true);
   });
+  syncSearchWithActiveTab();
   return true;
 }
 
@@ -237,6 +245,7 @@ async function closeTab(tabId: number) {
       switchToTab(tabs[Math.min(index, tabs.length - 1)].session.id);
     } else {
       activeTabId = null;
+      closeSearch();
     }
   }
 
@@ -399,7 +408,14 @@ function handleKeydown(e: KeyboardEvent) {
     return;
   }
 
-  if (e.key === "t" || e.key === "n") {
+  if (e.key === "f" && !e.shiftKey) {
+    e.preventDefault();
+    openSearch();
+  } else if (e.key === "g" || e.key === "G") {
+    // macOS は Cmd を押している間 Shift を文字へ適用しないことがあるので両方受ける
+    e.preventDefault();
+    findInTerminal(e.shiftKey ? -1 : 1);
+  } else if (e.key === "t" || e.key === "n") {
     e.preventDefault();
     createTab();
   } else if (e.key === "w") {
@@ -428,6 +444,7 @@ export async function initTabs(ui: TabElements, config: AppConfig): Promise<void
   appConfig = config;
 
   ui.newTabButton.addEventListener("click", () => createTab());
+  initSearch(ui.terminalsContainer, () => activeTab()?.session);
   document.addEventListener("keydown", handleCycleKeydown, true);
   document.addEventListener("keyup", handleCycleKeyup, true);
   // ウインドウが背面へ回ると Ctrl の keyup が届かない (吹き出しは blur で隠れる)。
