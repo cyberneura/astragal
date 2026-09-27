@@ -39,9 +39,13 @@ const SEARCH_OPTIONS: ISearchOptions = {
 export function createSearchAddon(terminal: Terminal): SearchAddon {
   const search = new SearchAddon({ highlightLimit: HIGHLIGHT_LIMIT });
   terminal.loadAddon(search);
-  const internals = search as unknown as { _destroyLinesCache?: () => void };
-  terminal.onWriteParsed(() => internals._destroyLinesCache?.());
+  terminal.onWriteParsed(() => destroyLinesCache(search));
   return search;
+}
+
+function destroyLinesCache(search: SearchAddon): void {
+  const internals = search as unknown as { _destroyLinesCache?: () => void };
+  internals._destroyLinesCache?.();
 }
 
 let bar: HTMLElement;
@@ -193,6 +197,32 @@ export function syncSearchWithActiveTab(): void {
 function clearSearchedSession(): void {
   searchedSession?.search.clearDecorations();
   searchedSession = null;
+}
+
+/**
+ * アクティブなタブのバッファをクリアした後に呼ぶ (Cmd+K)。
+ *
+ * `terminal.clear()` は書き込みでもカーソル移動でもないので、addon は行テキストの
+ * キャッシュを捨てず、一致の件数も検索し直さない。消えた行の内容で次の Cmd+G が
+ * 動かないようキャッシュを捨て、検索バーが開いていれば今のバッファで数え直す。
+ *
+ * 数え直しの前に `clearDecorations()` で検索語のキャッシュも捨てる。addon は検索語が
+ * 前回と同じなら全一致の再計算を省き、手元の強調の数をそのまま件数として返すので、
+ * 捨てずに検索し直すと消えた行の件数が残る (Codex 指摘)。
+ */
+export function syncSearchAfterClear(): void {
+  if (!bar) {
+    return;
+  }
+  const session = getActiveSession();
+  if (!session) {
+    return;
+  }
+  destroyLinesCache(session.search);
+  session.search.clearDecorations();
+  if (!bar.hidden) {
+    runSearch(true);
+  }
 }
 
 /**

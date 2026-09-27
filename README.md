@@ -17,6 +17,9 @@ A lightweight terminal app for macOS and Windows (Tauri 2.x + xterm.js).
   the main window and the popover. Enter / Shift+Enter (or Cmd+G / Cmd+Shift+G) jump to
   the next / previous match, and Esc closes the search bar. Text selected in the terminal
   becomes the search term when the bar opens
+- Cmd+K clears the active tab's screen and scrollback, keeping the line you are typing
+  (the same as Clear Buffer in iTerm2). It does nothing while a full-screen program such
+  as vim or less is showing; the scrollback is still there once you leave it
 - Cmd+click a URL to open it in the default browser. Holding Cmd underlines the URL
   under the pointer, and a URL that soft-wraps across lines opens in full
 - Configuration through `~/.config/astragal/config.yaml`
@@ -60,6 +63,7 @@ too, with these differences:
   | Cmd+1 … Cmd+9 (go to tab) | Ctrl+Shift+1 … Ctrl+Shift+9 |
   | Cmd+F (search) | Ctrl+Shift+F |
   | Cmd+G / Cmd+Shift+G (next / previous match) | F3 / Shift+F3 (while the search bar is open) |
+  | Cmd+K (clear screen and scrollback) | Ctrl+Shift+K |
   | Cmd+= / Cmd+- / Cmd+0 (font size) | Ctrl+= / Ctrl+- / Ctrl+0 |
   | Cmd+C / Cmd+V | Ctrl+Shift+C / Ctrl+Shift+V. Ctrl+C copies when text is selected (otherwise it interrupts), Ctrl+V pastes |
   | Cmd+click a URL | Ctrl+click a URL |

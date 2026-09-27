@@ -14,6 +14,7 @@ import {
   initSearch,
   isSearchOpen,
   openSearch,
+  syncSearchAfterClear,
   syncSearchWithActiveTab,
 } from "./search";
 import { IS_WINDOWS, shortcutLabel } from "./platform";
@@ -325,6 +326,25 @@ function setFontSize(size: number) {
   fitLater(tab);
 }
 
+/**
+ * アクティブなタブのスクロールバックと画面を消す (Cmd+K。iTerm2 の Clear Buffer)。
+ *
+ * シェルへは何も送らない。`terminal.clear()` はカーソルのある行 (プロンプト) を
+ * 最上行へ持ち上げてそれ以外を捨てるので、入力中のコマンドはそのまま残る。
+ *
+ * 代替バッファ (vim / less 等の全画面アプリ) が表示中の時は何もしない。そちらを
+ * 消してもアプリは描き直さず、画面が空のまま操作だけ効く状態になる。スクロール
+ * バックは通常バッファ側にあり、アプリを抜ければそのまま見える。
+ */
+function clearActiveTerminal(): void {
+  const terminal = activeTab()?.session.terminal;
+  if (!terminal || terminal.buffer.active.type === "alternate") {
+    return;
+  }
+  terminal.clear();
+  syncSearchAfterClear();
+}
+
 // ── Ctrl+Tab Cycling ─────────────────────────────────────────────────────────
 //
 // ブラウザや VSCode と同じ「最近使った順」の巡回。Ctrl を押している間は順序を
@@ -506,6 +526,10 @@ function handleWindowsKeydown(e: KeyboardEvent): void {
       consume(e);
       openSearch();
       break;
+    case "KeyK":
+      consume(e);
+      clearActiveTerminal();
+      break;
     case "KeyC":
       consume(e);
       copySelection();
@@ -534,6 +558,9 @@ function handleKeydown(e: KeyboardEvent) {
   if (e.key === "f" && !e.shiftKey) {
     e.preventDefault();
     openSearch();
+  } else if (e.key === "k" && !e.shiftKey) {
+    e.preventDefault();
+    clearActiveTerminal();
   } else if (e.key === "g" || e.key === "G") {
     // macOS は Cmd を押している間 Shift を文字へ適用しないことがあるので両方受ける
     e.preventDefault();
