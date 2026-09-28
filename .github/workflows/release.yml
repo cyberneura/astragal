@@ -422,3 +422,16 @@ jobs:
         run: |
           VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
           gh release edit "v${VERSION}" --draft=false --latest
+
+  # 公開した版を winget にも出す。手順と初回登録の事情は winget.yml と docs/winget.md。
+  # 呼び出し側の permissions は呼ばれる側の job と同じ以上でなければならない。
+  winget:
+    needs: [plan, publish]
+    if: needs.plan.outputs.release == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/winget.yml
+    with:
+      version: ${{ needs.plan.outputs.version }}
+    secrets:
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}

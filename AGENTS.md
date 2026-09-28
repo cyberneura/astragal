@@ -99,6 +99,24 @@ version の正本は `src-tauri/tauri.conf.json` と `package.json` の 2 ファ
 GitHub Release を公開するので、**PR に version bump を含めるとマージがそのままリリースになる**。
 手順は `README.md` の「リリース」。
 
+## winget
+
+配布は `.github/workflows/winget.yml` (Komac の `update`) が release.yml の末尾から
+呼ばれて microsoft/winget-pkgs へ PR を出す。仕組みと初回登録の手順は `docs/winget.md`。
+書き換える時に効く前提:
+
+- `komac new` は CI で動かない (InstallModes / UpgradeBehavior 等の対話をフラグで埋められない)。
+  初回登録は manifest 手書き。`update` は既存パッケージ専用
+- fork は org 配下 (`cyberneura/winget-pkgs`)。Komac は既定で token の持ち主の fork を探すので
+  `KOMAC_FORK_OWNER` が要る。token は `GITHUB_TOKEN` 環境変数で渡すが、winget 側の操作には
+  このリポジトリの `github.token` ではなく classic PAT の `WINGET_TOKEN` を入れること
+- `on: release` では起動しない (release.yml が `github.token` で公開するイベントは他の
+  workflow を起こさない)。`workflow_call` で release.yml から繋いでいる
+- Komac は `CI=true` だと既存 PR の確認を飛ばして 2 本目を出す。重複は winget.yml 側の
+  guard で止めている
+- NSIS の stub は 32bit なので `komac analyse` は x86 と言う。`update` は URL の `x64` を
+  優先するので実害は無いが、手書き時は自分で `x64` にする
+
 ## macOS 固有の注意
 
 ### 座標の単位系
