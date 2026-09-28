@@ -803,7 +803,7 @@ fn app_info(app: AppHandle) -> AppInfo {
 /// 呼んでから出す。webview の初期背景が白なので、先に出すと一瞬白く光る。
 fn show_about_window(app: &AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("about") {
-        return present_about_window(&win);
+        return present_auxiliary_window(&win);
     }
     tauri::WebviewWindowBuilder::new(
         app,
@@ -827,7 +827,8 @@ fn show_about_window(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn present_about_window(win: &WebviewWindow) -> Result<(), String> {
+/// About / Third-Party Licenses のような、開くたびに作る補助ウインドウを前面に出す。
+fn present_auxiliary_window(win: &WebviewWindow) -> Result<(), String> {
     let _ = move_to_cursor_monitor(win);
     win.show().map_err(|e| e.to_string())?;
     win.set_focus().map_err(|e| e.to_string())
@@ -837,7 +838,48 @@ fn present_about_window(win: &WebviewWindow) -> Result<(), String> {
 #[tauri::command]
 fn about_window_ready(app: AppHandle) -> Result<(), String> {
     match app.get_webview_window("about") {
-        Some(win) => present_about_window(&win),
+        Some(win) => present_auxiliary_window(&win),
+        None => Ok(()),
+    }
+}
+
+/// 配布物に含まれる依存ライブラリのライセンス一覧。リポジトリ直下の
+/// THIRD-PARTY-NOTICES.txt をビルド時に埋め込む (`pnpm notices` で生成する)。
+const THIRD_PARTY_NOTICES: &str = include_str!("../../THIRD-PARTY-NOTICES.txt");
+
+#[tauri::command]
+fn third_party_notices() -> &'static str {
+    THIRD_PARTY_NOTICES
+}
+
+/// Third-Party Licenses ウインドウを出す。作り方と出し方は About と同じ
+/// (閉じると破棄、非表示で作って front の合図で出す)。
+fn show_licenses_window(app: &AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("licenses") {
+        return present_auxiliary_window(&win);
+    }
+    tauri::WebviewWindowBuilder::new(
+        app,
+        "licenses",
+        tauri::WebviewUrl::App("licenses.html".into()),
+    )
+    .title("Third-Party Licenses")
+    .inner_size(640.0, 560.0)
+    .min_inner_size(400.0, 300.0)
+    .theme(Some(tauri::Theme::Dark))
+    .background_color(tauri::window::Color(0x11, 0x11, 0x11, 0xff))
+    .visible(false)
+    .center()
+    .build()
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Third-Party Licenses 画面の描画が終わった合図。
+#[tauri::command]
+fn licenses_window_ready(app: AppHandle) -> Result<(), String> {
+    match app.get_webview_window("licenses") {
+        Some(win) => present_auxiliary_window(&win),
         None => Ok(()),
     }
 }
@@ -860,6 +902,7 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let toggle = MenuItemBuilder::with_id("toggle", "Show Window").build(app)?;
     let separator = tauri::menu::PredefinedMenuItem::separator(app)?;
     let about = MenuItemBuilder::with_id("about", "About Astragal").build(app)?;
+    let licenses = MenuItemBuilder::with_id("licenses", "Third-Party Licenses").build(app)?;
     let close = MenuItemBuilder::with_id("close", "Close").build(app)?;
 
     let menu = MenuBuilder::new(app)
@@ -867,6 +910,7 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .item(&toggle)
         .item(&separator)
         .item(&about)
+        .item(&licenses)
         .item(&close)
         .build()?;
 
@@ -887,6 +931,11 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             "about" => {
                 if let Err(e) = show_about_window(app) {
                     eprintln!("astragal: failed to show the about window: {e}");
+                }
+            }
+            "licenses" => {
+                if let Err(e) = show_licenses_window(app) {
+                    eprintln!("astragal: failed to show the licenses window: {e}");
                 }
             }
             "close" => {
@@ -1219,6 +1268,8 @@ pub fn run() {
             get_config,
             app_info,
             about_window_ready,
+            third_party_notices,
+            licenses_window_ready,
             request_small_anchor,
             create_terminal,
             write_stdin,
@@ -1238,6 +1289,227 @@ mod tests {
     use super::*;
     use std::str::FromStr;
     use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
+
+    /// 配布物に入る直接依存の crate 名を Cargo.toml から拾う。`[dependencies]` と
+    /// `[target.'cfg(..)'.dependencies]` の `name = ...` の 1 行書式だけを見る
+    /// (`[dependencies.foo]` 形式は拾えない)。build / dev 依存は配布物に入らないので除く。
+    /// 配布しないターゲット (Linux) 専用の target 依存を足すと、about.toml の targets の
+    /// 外なので notices に載らず、このテストが落ちる。その時はここで除外する。
+    fn direct_rust_dependencies() -> Vec<String> {
+        let mut section = String::new();
+        let mut names = Vec::new();
+        for line in include_str!("../Cargo.toml").lines() {
+            let line = line.trim();
+            if line.starts_with('[') {
+                section = line.to_string();
+                continue;
+            }
+            let shipped = section == "[dependencies]"
+                || (section.starts_with("[target.") && section.ends_with(".dependencies]"));
+            if !shipped || line.starts_with('#') {
+                continue;
+            }
+            if let Some((name, _)) = line.split_once('=') {
+                names.push(name.trim().to_string());
+            }
+        }
+        names
+    }
+
+    /// package.json の dependencies (vite が bundle する runtime 依存) の名前。
+    fn direct_npm_dependencies() -> Vec<String> {
+        let package: serde_json::Value =
+            serde_json::from_str(include_str!("../../package.json")).expect("package.json parses");
+        package["dependencies"]
+            .as_object()
+            .expect("package.json has dependencies")
+            .keys()
+            .cloned()
+            .collect()
+    }
+
+    /// THIRD-PARTY-NOTICES.txt の "Used by:" ブロックに並ぶ (package 名, version)。
+    /// 生成物のエントリは区切り線 → `License: ...` → 空行 → "Used by:" の並びなので、
+    /// その並びだけをブロックとして読む (ライセンス本文に同じ字面があっても数えない)。
+    /// npm 側と Rust 側は "# Rust crates" の見出しで分かれている。
+    fn packages_in_notices(section: &str) -> Vec<(String, String)> {
+        let text = match section {
+            "npm" => THIRD_PARTY_NOTICES.split("# Rust crates").next(),
+            "rust" => THIRD_PARTY_NOTICES.split("# Rust crates").nth(1),
+            _ => None,
+        }
+        .expect("the notices file has a Rust crates heading");
+        let separator = "=".repeat(80);
+        let mut packages = Vec::new();
+        let mut in_block = false;
+        let mut after_separator = false;
+        let mut after_license = false;
+        for line in text.lines() {
+            if in_block {
+                let mut words = line.strip_prefix("  ").unwrap_or("").split(' ');
+                match (words.next(), words.next()) {
+                    (Some(name), Some(version)) if !name.is_empty() => {
+                        packages.push((name.to_string(), version.to_string()));
+                    }
+                    _ => in_block = false,
+                }
+                continue;
+            }
+            in_block = after_license && line == "Used by:";
+            after_license = (after_separator && line.starts_with("License: "))
+                || (after_license && line.is_empty());
+            after_separator = line == separator;
+        }
+        packages
+    }
+
+    /// Cargo.lock の [[package]] ブロック。(name, version, dependencies の行)。
+    fn locked_rust_packages() -> Vec<(String, String, Vec<String>)> {
+        include_str!("../Cargo.lock")
+            .split("[[package]]")
+            .skip(1)
+            .map(|block| {
+                let field = |key: &str| {
+                    block
+                        .lines()
+                        .find_map(|line| line.strip_prefix(key))
+                        .map(|rest| rest.trim().trim_matches('"').to_string())
+                        .unwrap_or_default()
+                };
+                let deps = block
+                    .lines()
+                    .filter_map(|line| line.strip_prefix(" \""))
+                    .map(|line| line.trim_end_matches("\",").to_string())
+                    .collect();
+                (field("name = "), field("version = "), deps)
+            })
+            .collect()
+    }
+
+    /// Cargo.lock が astragal の直接依存 `name` に選んだ version。同じ crate が 2 つ以上の
+    /// version で入っている時は、ルートの dependencies に `name version` の形で書かれる。
+    fn resolved_rust_version(lock: &[(String, String, Vec<String>)], name: &str) -> String {
+        let root = lock
+            .iter()
+            .find(|(crate_name, _, _)| crate_name == "astragal")
+            .expect("Cargo.lock has the astragal package");
+        let entry = root
+            .2
+            .iter()
+            .find(|dep| *dep == name || dep.starts_with(&format!("{name} ")))
+            .unwrap_or_else(|| panic!("{name} is not a dependency of astragal in Cargo.lock"));
+        // 同名同 version で source が違う時は `name version (source)` になるので 2 語目だけ
+        match entry.split(' ').nth(1) {
+            Some(version) => version.to_string(),
+            None => {
+                let mut versions = lock
+                    .iter()
+                    .filter(|(crate_name, _, _)| crate_name == name)
+                    .map(|(_, version, _)| version.clone());
+                let version = versions.next().expect("the crate is in Cargo.lock");
+                assert!(versions.next().is_none(), "{name} has several versions in Cargo.lock");
+                version
+            }
+        }
+    }
+
+    /// pnpm-lock.yaml の importers の `.` (このプロジェクト) が dependencies に選んだ
+    /// (name, version)。`name:` → `specifier:` → `version:` の 3 行で並ぶ。
+    fn resolved_npm_versions() -> Vec<(String, String)> {
+        let importer = include_str!("../../pnpm-lock.yaml")
+            .split("\nimporters:\n")
+            .nth(1)
+            .expect("pnpm-lock.yaml has an importers section")
+            .split("\npackages:\n")
+            .next()
+            .expect("importers come before packages");
+        let mut resolved = Vec::new();
+        let mut name = String::new();
+        let mut in_dependencies = false;
+        for line in importer.lines() {
+            if line.starts_with("    ") && !line.starts_with("     ") {
+                in_dependencies = line == "    dependencies:";
+                continue;
+            }
+            if !in_dependencies {
+                continue;
+            }
+            if let Some(key) = line.strip_prefix("      ").filter(|rest| !rest.starts_with(' ')) {
+                name = key.trim_end_matches(':').trim_matches('\'').to_string();
+            } else if let Some(version) = line.strip_prefix("        version: ") {
+                // peer 依存の括弧は notices の version には無い
+                let version = version.split('(').next().unwrap_or(version).trim();
+                resolved.push((name.clone(), version.to_string()));
+            }
+        }
+        resolved
+    }
+
+    /// 直接依存が、Cargo.lock が選んだ version で載っているか。名前だけだと、上げた依存の
+    /// 旧 version が推移依存として残っている時に通ってしまう。
+    #[test]
+    fn third_party_notices_list_every_direct_rust_dependency() {
+        // Arrange
+        let deps = direct_rust_dependencies();
+        assert!(deps.contains(&"tauri".to_string()), "parsed deps: {deps:?}");
+        let lock = locked_rust_packages();
+        let listed = packages_in_notices("rust");
+        assert!(listed.len() > 100, "parsed notices: {listed:?}");
+
+        // Act
+        let missing: Vec<(String, String)> = deps
+            .iter()
+            .map(|name| (name.clone(), resolved_rust_version(&lock, name)))
+            .filter(|entry| !listed.contains(entry))
+            .collect();
+
+        // Assert
+        assert!(missing.is_empty(), "not in THIRD-PARTY-NOTICES.txt (run `pnpm notices`): {missing:?}");
+    }
+
+    /// 載っている crate の version が Cargo.lock と食い違えば、依存を上げたのに
+    /// `pnpm notices` を流していない。
+    #[test]
+    fn third_party_notices_match_cargo_lock_versions() {
+        // Arrange
+        let lock = locked_rust_packages();
+        let listed = packages_in_notices("rust");
+        assert!(listed.len() > 100, "parsed notices: {listed:?}");
+
+        // Act
+        let stale: Vec<&(String, String)> = listed
+            .iter()
+            .filter(|(name, version)| {
+                !lock.iter().any(|(n, v, _)| n == name && v == version)
+            })
+            .collect();
+
+        // Assert
+        assert!(stale.is_empty(), "not in Cargo.lock (run `pnpm notices`): {stale:?}");
+    }
+
+    /// 直接依存が、pnpm-lock.yaml が選んだ version で載っているか。notices の npm 側は
+    /// node_modules の package.json から書くので、lock を更新して install と再生成を
+    /// 忘れると古い version のまま残る。
+    #[test]
+    fn third_party_notices_list_every_npm_runtime_dependency() {
+        // Arrange
+        let deps = direct_npm_dependencies();
+        assert!(deps.contains(&"xterm".to_string()), "parsed deps: {deps:?}");
+        let resolved = resolved_npm_versions();
+        assert_eq!(resolved.len(), deps.len(), "parsed lock importer: {resolved:?}");
+        let listed = packages_in_notices("npm");
+
+        // Act
+        let missing: Vec<&(String, String)> =
+            resolved.iter().filter(|entry| !listed.contains(entry)).collect();
+        let unknown: Vec<&(String, String)> =
+            listed.iter().filter(|entry| !resolved.contains(entry)).collect();
+
+        // Assert
+        assert!(missing.is_empty(), "not in THIRD-PARTY-NOTICES.txt (run `pnpm notices`): {missing:?}");
+        assert!(unknown.is_empty(), "not in pnpm-lock.yaml (run `pnpm notices`): {unknown:?}");
+    }
 
     /// Retina の primary (論理 1512x982, scale 2) の右に FHD の外部ディスプレイ
     /// (1920x1080, scale 1) を並べた構成。Monitor が返す物理値で表す。

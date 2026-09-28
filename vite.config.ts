@@ -18,6 +18,7 @@ export default defineConfig(() => ({
         index: "index.html",
         small: "small.html",
         about: "about.html",
+        licenses: "licenses.html",
       },
     },
   },

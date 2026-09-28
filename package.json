@@ -1,14 +1,15 @@
 {
   "name": "astragal",
   "private": true,
-  "version": "0.7.1",
+  "version": "0.8.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "release": "bash scripts/release.sh"
+    "release": "bash scripts/release.sh",
+    "notices": "bash scripts/generate-third-party-notices.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
