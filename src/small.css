@@ -63,6 +63,19 @@ body {
   border-top: var(--arrow-height) solid var(--terminal-background);
 }
 
+/* Windows ではツノを出さない。タスクバーの通知領域は macOS のメニューバーと違って
+   アイコンから吹き出す見た目にならず、ツノ用の余白が透明な隙間として残るだけになる。
+   ツノの辺 (上下どちらでも) の余白も消して、パネルをウインドウいっぱいに広げる */
+.platform-windows #app,
+.platform-windows.popover-above #app {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.platform-windows #arrow.anchored {
+  display: none;
+}
+
 /* 信号機ボタンもタイトルも無いので、左端から詰める */
 #tab-bar {
   padding-left: 8px;
