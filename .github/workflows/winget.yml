@@ -1,0 +1,177 @@
+name: winget
+
+# 公開済みの GitHub Release から winget (microsoft/winget-pkgs) へ新しい版を提出する。
+# release.yml の publish の後に workflow_call で呼ばれるのが通常経路。手で出し直す時は
+# workflow_dispatch に version を渡す (Release が公開済みであること)。
+#
+# `on: release` では動かせない。release.yml は既定の GITHUB_TOKEN で Release を公開
+# するため、そのイベントは他の workflow を起動しない (GitHub の再帰防止)。
+#
+# 提出は Komac の `update` で行う。`komac new` (初回登録) は InstallModes 等を対話で
+# 訊いてくる部分をフラグで埋められず CI では動かないので、初回だけは docs/winget.md の
+# 手順で manifest を手書きして PR を出している。この workflow はその後の版だけを扱う。
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Version to submit, without the v prefix
+        required: true
+        type: string
+    secrets:
+      WINGET_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to submit, without the v prefix (its Release must be published)
+        required: true
+        type: string
+
+permissions: {}
+
+env:
+  PACKAGE_ID: Cyberneura.Astragal
+  # microsoft/winget-pkgs の fork。ユーザー個人ではなく org 配下にあるので、Komac が
+  # token の持ち主 (ytyng) の fork を探しに行かないよう KOMAC_FORK_OWNER で指す。
+  FORK_OWNER: cyberneura
+  KOMAC_VERSION: 2.16.0
+  KOMAC_SHA256: 7d2707fa6210f2789a3702de49fbd150b736dbf426ee0b9bc8e098736f9fd82d
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    # release.yml から呼ばれた run と workflow_dispatch の run が同時に走ると、両方が
+    # 「PR はまだ無い」を通過してから Komac を動かし、PR が 2 本出る。release.yml の
+    # concurrency は単独で dispatch された winget.yml には掛からないので、job で直列化する。
+    # queue: max が無いと pending は 1 件だけで、後発に置き換えられた版は Decide まで
+    # 届かず、notice も出ないまま提出されない (release.yml と同じ理由)。
+    concurrency:
+      group: winget-submit
+      cancel-in-progress: false
+      queue: max
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      # WINGET_TOKEN は token の持ち主 (fork に push でき、winget-pkgs へ PR を出せる人) の
+      # classic PAT (`public_repo`)。無いと Komac は認証プロンプトを出そうとして落ちるので、
+      # 先に分かる形で止める。
+      - name: Check the winget token
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          if [ -z "$WINGET_TOKEN" ]; then
+            echo "::error::The WINGET_TOKEN secret is missing. It must be a classic PAT with the public_repo scope."
+            exit 1
+          fi
+
+      # Release が公開済みで、Windows のインストーラーが載っていることを確かめる。
+      # draft には tag が無いので releases/tags/<tag> は 404 を返す。
+      - name: Find the Windows installer in the release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          url=$(gh api "repos/${GH_REPO}/releases/tags/v${VERSION}" \
+            --jq '.assets[] | select(.name | test("_x64-setup\\.exe$")) | .browser_download_url')
+          if [ -z "$url" ]; then
+            echo "::error::Release v${VERSION} has no *_x64-setup.exe asset (or is not published)."
+            exit 1
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Installer: $url"
+
+      # Komac の update は既存パッケージにしか使えない。初回の PR がまだマージされて
+      # いない間は、失敗ではなく「まだ」として抜ける (release.yml の run を赤くしない)。
+      # 同じ版が既に入っている / 既に PR が開いている時も同様。Komac は CI では既存 PR の
+      # 確認プロンプトを飛ばして黙って 2 本目を出すので、ここで止める。
+      #
+      # 存在確認は HTTP status で行い、404 だけを「無い」と読む。rate limit や障害を
+      # 「無い」と読むと、提出が黙って飛ぶか (パッケージ側)、重複提出に進む (版側)。
+      - name: Decide whether this version needs submitting
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 引数のパスが winget-pkgs の master に存在するか。200 → exists、404 → missing、
+          # それ以外は判定できないので失敗させる (release.yml の plan と同じ扱い)。
+          exists() {
+            local status
+            status=$(gh api "repos/microsoft/winget-pkgs/contents/$1" --silent --include 2>/dev/null \
+              | head -n 1 | awk '{print $2}' || true)
+            case "$status" in
+              200) return 0 ;;
+              404) return 1 ;;
+              *)
+                echo "::error::could not check ${1} in microsoft/winget-pkgs (HTTP ${status:-none}). Not guessing."
+                exit 1
+                ;;
+            esac
+          }
+          path="manifests/c/${PACKAGE_ID//./\/}"
+          if ! exists "$path"; then
+            echo "::notice::${PACKAGE_ID} is not in microsoft/winget-pkgs yet. Submit the first version by hand (docs/winget.md), then re-run this workflow for ${VERSION}."
+            echo "submit=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if exists "$path/${VERSION}"; then
+            echo "::notice::${PACKAGE_ID} ${VERSION} is already in winget-pkgs. Nothing to do."
+            echo "submit=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          open=$(gh pr list --repo microsoft/winget-pkgs --state open \
+            --search "\"${PACKAGE_ID} version ${VERSION}\" in:title" --json url --jq '.[0].url // ""')
+          if [ -n "$open" ]; then
+            echo "::notice::A pull request for ${PACKAGE_ID} ${VERSION} is already open: ${open}"
+            echo "submit=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "submit=true" >> "$GITHUB_OUTPUT"
+
+      # fork に push し PR を出す token を渡すので、Komac は release の他の action と同じく
+      # 版と sha256 を固定して入れる (cargo-binstall や @main の action は使わない)。
+      - name: Install Komac
+        if: steps.decide.outputs.submit == 'true'
+        run: |
+          curl -sSfL -o komac.tar.gz \
+            "https://github.com/russellbanks/Komac/releases/download/v${KOMAC_VERSION}/komac-${KOMAC_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${KOMAC_SHA256}  komac.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/komac"
+          tar -xzf komac.tar.gz -C "$RUNNER_TEMP/komac"
+          echo "$RUNNER_TEMP/komac" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/komac/komac" --version
+
+      # Komac は GITHUB_TOKEN 環境変数から token を読む。ここから先は winget-pkgs 側の
+      # 操作なので、このリポジトリの github.token ではなく WINGET_TOKEN を入れる。
+      - name: Sync the fork with microsoft/winget-pkgs
+        if: steps.decide.outputs.submit == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          KOMAC_FORK_OWNER: ${{ env.FORK_OWNER }}
+        run: komac sync-fork
+
+      - name: Submit the version to winget-pkgs
+        if: steps.decide.outputs.submit == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          KOMAC_FORK_OWNER: ${{ env.FORK_OWNER }}
+          KOMAC_CREATED_WITH: Astragal release workflow
+          KOMAC_CREATED_WITH_URL: ${{ github.server_url }}/${{ github.repository }}/blob/main/.github/workflows/winget.yml
+          INSTALLER_URL: ${{ steps.release.outputs.url }}
+        run: |
+          komac update "$PACKAGE_ID" \
+            --version "$VERSION" \
+            --urls "$INSTALLER_URL" \
+            --release-notes-url "${{ github.server_url }}/${{ github.repository }}/releases/tag/v${VERSION}" \
+            --submit
+
+      # マージ済みの PR のブランチを fork から消す (Komac が版ごとに 1 本ずつ作るため)。
+      - name: Clean up merged branches in the fork
+        if: steps.decide.outputs.submit == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          KOMAC_FORK_OWNER: ${{ env.FORK_OWNER }}
+        run: komac cleanup --only-merged

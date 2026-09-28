@@ -43,8 +43,15 @@ installer is not code-signed, so SmartScreen warns on first run ("Windows protec
 your PC" → More info → Run anyway). It installs for the current user and needs no
 administrator rights.
 
-Astragal is not on winget yet. See [docs/winget.md](docs/winget.md) for what publishing
-it there takes.
+Or, with winget:
+
+```shell
+winget install Cyberneura.Astragal
+```
+
+Each release is submitted to [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs)
+automatically, but a version only becomes installable after Microsoft's moderators
+merge it, which takes days. See [docs/winget.md](docs/winget.md).
 
 ### Windows differences
 
@@ -193,7 +200,10 @@ repository, and the build fails up front if any one of them is missing (if it we
 without them, an unnotarized `.dmg` would be published silently).
 
 The Homebrew cask (cyberneura/homebrew-tap) updates itself hourly from the latest
-release, so it can take up to an hour for a new version to show up in `brew`.
+release, so it can take up to an hour for a new version to show up in `brew`. The
+`winget` job at the end of the workflow opens a pull request to microsoft/winget-pkgs
+for the new version (`.github/workflows/winget.yml`, which needs the `WINGET_TOKEN`
+secret); see [docs/winget.md](docs/winget.md).
 
 ## Tests
 

@@ -1,97 +1,70 @@
 # Publishing Astragal on winget
 
-Astragal is **not on winget yet**. This page covers what it takes to get it there and to
-keep it updated.
-
-Unlike the Homebrew tap (`cyberneura/homebrew-tap`, which we own), winget packages live
-in [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs). Adding or updating
-a package means opening a pull request there, which Microsoft's bots validate
-(installer download, SHA-256, a Defender scan, a silent install in a sandbox) before a
-moderator merges it. Nothing in this repository can publish to winget on its own.
-
-## What the Release already provides
-
-Starting with 0.6.0, every release carries an NSIS installer built by `release.yml`:
+winget packages live in [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs),
+not in a repository we own (unlike the Homebrew tap). Each version is a pull request
+there, which Microsoft's bots validate (installer download, SHA-256, a Defender scan,
+a silent install in a sandbox) before a moderator merges it. The package identifier is
+`Cyberneura.Astragal`.
 
 ```
-https://github.com/cyberneura/astragal/releases/download/v<version>/Astragal_<version>_x64-setup.exe
+winget install Cyberneura.Astragal
 ```
 
-It installs per user (`%LOCALAPPDATA%`), needs no administrator rights, and supports the
-silent switch `/S`, which is what winget runs. It is **not code-signed**; winget accepts
-unsigned installers, but SmartScreen reputation and the Defender scan are more likely
-to cause trouble than with a signed one.
+## What is set up
 
-## First submission (manual, needs a human with a Windows machine)
+| Piece | Where |
+|---|---|
+| Fork of `microsoft/winget-pkgs` | `cyberneura/winget-pkgs` |
+| Classic PAT (`public_repo`) of an account that can push to that fork | repository secret `WINGET_TOKEN` |
+| Submission workflow | `.github/workflows/winget.yml` |
+| Hook that runs it after each release | the `winget` job at the end of `release.yml` |
 
-1. Install [wingetcreate](https://github.com/microsoft/winget-create)
-   (`winget install wingetcreate`).
-2. Generate the manifests from the release asset:
+`winget.yml` downloads a pinned [Komac](https://github.com/russellbanks/Komac) binary
+(version and SHA-256 are in the workflow's `env`), syncs the fork, and runs
+`komac update Cyberneura.Astragal --version <v> --urls <installer> --submit`. Komac
+downloads the NSIS installer, fills in the SHA-256 and the installer metadata, pushes a
+branch to the fork and opens the pull request. Every release therefore ends with a
+winget-pkgs pull request opened by the owner of `WINGET_TOKEN`.
 
-   ```powershell
-   wingetcreate new https://github.com/cyberneura/astragal/releases/download/v0.6.0/Astragal_0.6.0_x64-setup.exe
-   ```
+Before submitting, the workflow checks that the package already exists in winget-pkgs,
+that the version is not there yet, and that no pull request for it is open. In each of
+those cases it stops with a notice instead of failing, so a release run stays green while
+the first submission is waiting for a moderator.
 
-   Suggested values when prompted:
+## Submitting a version by hand
 
-   | Field | Value |
-   |---|---|
-   | PackageIdentifier | `Cyberneura.Astragal` |
-   | Publisher | `Cyberneura` |
-   | PackageName | `Astragal` |
-   | License | the repository has no license file yet; one is needed before submitting (winget requires the field) |
-   | ShortDescription | `A compact terminal for macOS and Windows` |
-   | InstallerType | `nullsoft` |
-   | Scope | `user` |
-   | Architecture | `x64` |
+Run the `winget` workflow from the Actions tab (or `gh workflow run winget.yml -f
+version=0.7.1`). The version's Release must already be published. This is the way to
+catch up on versions released while the package was not in winget-pkgs yet, or to retry
+after a validation failure that was fixed on the winget-pkgs side.
 
-3. Test locally before submitting:
+## The first submission
 
-   ```powershell
-   winget validate --manifest <dir>
-   winget install --manifest <dir>
-   ```
+Komac's `update` only works for packages that are already in winget-pkgs, and
+`komac new` asks interactive questions (install modes, upgrade behavior, commands, ...)
+that have no command line flags, so it cannot run in CI. The first version was submitted
+by writing the three manifests by hand and opening the pull request from a local
+checkout of the fork. If the package ever has to be created again (a new identifier,
+for example), the same steps apply:
 
-4. Submit (`wingetcreate submit <dir>`, or `wingetcreate new ... --submit`). This forks
-   `microsoft/winget-pkgs` under the signed-in GitHub account and opens the PR.
+1. Write `Cyberneura.Astragal.yaml`, `Cyberneura.Astragal.installer.yaml` and
+   `Cyberneura.Astragal.locale.en-US.yaml` for the version. `komac analyse
+   <installer.exe>` prints the installer part (type, product code, Apps & Features
+   entries). Set `Architecture: x64` yourself: the NSIS stub is a 32-bit program, so the
+   PE header says `x86`, while Komac's `update` takes the architecture from the `x64` in
+   the download URL.
+2. Put them under `manifests/c/Cyberneura/Astragal/<version>/` on a branch of
+   `cyberneura/winget-pkgs` and open a pull request to `microsoft/winget-pkgs` titled
+   `New package: Cyberneura.Astragal version <version>`.
+3. Answer the validation bot if it asks for changes. Once the pull request is merged,
+   `winget.yml` handles every later version.
 
-## Automating later versions (optional)
+Things the manifests depend on:
 
-Once the first version is merged into winget-pkgs, new releases can be submitted
-automatically with [winget-releaser](https://github.com/vedantmgoyal9/winget-releaser)
-(it only updates packages that already exist there). It needs:
-
-- a fork of `microsoft/winget-pkgs` under the account that submits
-  (`fork-user`), and
-- a **classic** personal access token of that account with `public_repo` (and
-  `workflow`, to keep the fork in sync), saved as the repository secret
-  `WINGET_TOKEN`.
-
-Then add a workflow such as the one below. It is intentionally **not** included in
-`.github/workflows/` yet: without the secret and the first manual submission it could
-only fail. Pin the action to a commit SHA rather than `@main` when adding it, like the
-other actions in `release.yml`.
-
-```yaml
-name: Publish to winget
-on:
-  release:
-    types: [released]
-permissions: {}
-jobs:
-  publish:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: vedantmgoyal9/winget-releaser@<commit-sha> # main
-        with:
-          identifier: Cyberneura.Astragal
-          installers-regex: '_x64-setup\.exe$'
-          token: ${{ secrets.WINGET_TOKEN }}
-          fork-user: <account-that-owns-the-fork>
-```
-
-`release.yml` publishes the Release with the default `GITHUB_TOKEN`, and events created
-by `GITHUB_TOKEN` do not trigger other workflows. So `on: release` alone will not fire
-for Releases published by `release.yml`. Either run the step as a final job inside
-`release.yml` (after `publish`), or trigger this workflow with `workflow_dispatch` /
-`workflow_run` on `Release`.
+- The installer is the NSIS `*_x64-setup.exe` that `release.yml` uploads. It installs
+  per user into `%LocalAppData%\Astragal`, needs no administrator rights, and supports
+  the silent switch `/S` that winget uses. It is not code-signed.
+- The Apps & Features `Publisher` comes from `bundle.publisher` in
+  `src-tauri/tauri.conf.json` (`Cyberneura`). Installers before 0.7.1 registered it as
+  `cyberneura`, the default Tauri derives from the bundle identifier.
+- The `License` field is `MIT`, matching the `LICENSE` file in this repository.
