@@ -36,6 +36,7 @@
     "active": true,
     "targets": "all",
     "category": "Utility",
+    "publisher": "Cyberneura",
     "shortDescription": "A compact terminal for macOS and Windows",
     "macOS": {
       "minimumSystemVersion": "11.0"
