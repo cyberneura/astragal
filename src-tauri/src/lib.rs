@@ -1295,10 +1295,10 @@ mod tests {
     /// (`[dependencies.foo]` 形式は拾えない)。build / dev 依存は配布物に入らないので除く。
     /// 配布しないターゲット (Linux) 専用の target 依存を足すと、about.toml の targets の
     /// 外なので notices に載らず、このテストが落ちる。その時はここで除外する。
-    fn direct_rust_dependencies() -> Vec<String> {
+    fn direct_rust_dependencies(manifest: &str) -> Vec<String> {
         let mut section = String::new();
         let mut names = Vec::new();
-        for line in include_str!("../Cargo.toml").lines() {
+        for line in manifest.lines() {
             let line = line.trim();
             if line.starts_with('[') {
                 section = line.to_string();
@@ -1328,14 +1328,20 @@ mod tests {
             .collect()
     }
 
+    /// Windows の checkout は autocrlf で CRLF になるので、行末を揃えてから読む
+    /// (`"\nimporters:\n"` のような改行込みの検索が外れる)。
+    fn lf(text: &str) -> String {
+        text.replace("\r\n", "\n")
+    }
+
     /// THIRD-PARTY-NOTICES.txt の "Used by:" ブロックに並ぶ (package 名, version)。
     /// 生成物のエントリは区切り線 → `License: ...` → 空行 → "Used by:" の並びなので、
     /// その並びだけをブロックとして読む (ライセンス本文に同じ字面があっても数えない)。
     /// npm 側と Rust 側は "# Rust crates" の見出しで分かれている。
-    fn packages_in_notices(section: &str) -> Vec<(String, String)> {
+    fn packages_in_notices(notices: &str, section: &str) -> Vec<(String, String)> {
         let text = match section {
-            "npm" => THIRD_PARTY_NOTICES.split("# Rust crates").next(),
-            "rust" => THIRD_PARTY_NOTICES.split("# Rust crates").nth(1),
+            "npm" => notices.split("# Rust crates").next(),
+            "rust" => notices.split("# Rust crates").nth(1),
             _ => None,
         }
         .expect("the notices file has a Rust crates heading");
@@ -1364,9 +1370,8 @@ mod tests {
     }
 
     /// Cargo.lock の [[package]] ブロック。(name, version, dependencies の行)。
-    fn locked_rust_packages() -> Vec<(String, String, Vec<String>)> {
-        include_str!("../Cargo.lock")
-            .split("[[package]]")
+    fn locked_rust_packages(lock: &str) -> Vec<(String, String, Vec<String>)> {
+        lock.split("[[package]]")
             .skip(1)
             .map(|block| {
                 let field = |key: &str| {
@@ -1415,8 +1420,8 @@ mod tests {
 
     /// pnpm-lock.yaml の importers の `.` (このプロジェクト) が dependencies に選んだ
     /// (name, version)。`name:` → `specifier:` → `version:` の 3 行で並ぶ。
-    fn resolved_npm_versions() -> Vec<(String, String)> {
-        let importer = include_str!("../../pnpm-lock.yaml")
+    fn resolved_npm_versions(lock: &str) -> Vec<(String, String)> {
+        let importer = lock
             .split("\nimporters:\n")
             .nth(1)
             .expect("pnpm-lock.yaml has an importers section")
@@ -1450,10 +1455,10 @@ mod tests {
     #[test]
     fn third_party_notices_list_every_direct_rust_dependency() {
         // Arrange
-        let deps = direct_rust_dependencies();
+        let deps = direct_rust_dependencies(&lf(include_str!("../Cargo.toml")));
         assert!(deps.contains(&"tauri".to_string()), "parsed deps: {deps:?}");
-        let lock = locked_rust_packages();
-        let listed = packages_in_notices("rust");
+        let lock = locked_rust_packages(&lf(include_str!("../Cargo.lock")));
+        let listed = packages_in_notices(&lf(THIRD_PARTY_NOTICES), "rust");
         assert!(listed.len() > 100, "parsed notices: {listed:?}");
 
         // Act
@@ -1472,8 +1477,8 @@ mod tests {
     #[test]
     fn third_party_notices_match_cargo_lock_versions() {
         // Arrange
-        let lock = locked_rust_packages();
-        let listed = packages_in_notices("rust");
+        let lock = locked_rust_packages(&lf(include_str!("../Cargo.lock")));
+        let listed = packages_in_notices(&lf(THIRD_PARTY_NOTICES), "rust");
         assert!(listed.len() > 100, "parsed notices: {listed:?}");
 
         // Act
@@ -1496,9 +1501,9 @@ mod tests {
         // Arrange
         let deps = direct_npm_dependencies();
         assert!(deps.contains(&"xterm".to_string()), "parsed deps: {deps:?}");
-        let resolved = resolved_npm_versions();
+        let resolved = resolved_npm_versions(&lf(include_str!("../../pnpm-lock.yaml")));
         assert_eq!(resolved.len(), deps.len(), "parsed lock importer: {resolved:?}");
-        let listed = packages_in_notices("npm");
+        let listed = packages_in_notices(&lf(THIRD_PARTY_NOTICES), "npm");
 
         // Act
         let missing: Vec<&(String, String)> =
@@ -1509,6 +1514,25 @@ mod tests {
         // Assert
         assert!(missing.is_empty(), "not in THIRD-PARTY-NOTICES.txt (run `pnpm notices`): {missing:?}");
         assert!(unknown.is_empty(), "not in pnpm-lock.yaml (run `pnpm notices`): {unknown:?}");
+    }
+
+    /// Windows の checkout (CRLF) でも同じ結果になること。CI の windows-latest で
+    /// pnpm-lock.yaml の importers が見つからず落ちた。
+    #[test]
+    fn notices_parsers_accept_crlf() {
+        // Arrange
+        let notices = "x\r\n# Rust crates\r\n\r\n".to_string()
+            + &"=".repeat(80)
+            + "\r\nLicense: MIT\r\n\r\nUsed by:\r\n  serde 1.0.0 (u)\r\n\r\ntext\r\n";
+        let lock = "lockfileVersion: '9.0'\r\nimporters:\r\n  .:\r\n    dependencies:\r\n      xterm:\r\n        specifier: ^5\r\n        version: 5.3.0\r\npackages:\r\n";
+
+        // Act
+        let listed = packages_in_notices(&lf(&notices), "rust");
+        let resolved = resolved_npm_versions(&lf(lock));
+
+        // Assert
+        assert_eq!(listed, vec![("serde".to_string(), "1.0.0".to_string())]);
+        assert_eq!(resolved, vec![("xterm".to_string(), "5.3.0".to_string())]);
     }
 
     /// Retina の primary (論理 1512x982, scale 2) の右に FHD の外部ディスプレイ

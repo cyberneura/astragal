@@ -49,7 +49,11 @@ for (const name of deps.sort()) {
   const dir = path.join("node_modules", name);
   const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
   const repo = typeof pkg.repository === "string" ? pkg.repository : pkg.repository?.url;
-  const files = fs.readdirSync(dir).filter((f) => /^(LICEN[CS]E|COPYING|NOTICE)/i.test(f)).sort();
+  // LICENSE.spdx のような SPDX のメタデータは本文ではないので除く
+  const files = fs
+    .readdirSync(dir)
+    .filter((f) => /^(LICEN[CS]E|COPYING|NOTICE)/i.test(f) && !/\.spdx$/i.test(f))
+    .sort();
   console.log("=".repeat(80));
   console.log(`License: ${pkg.license}`);
   console.log("");
