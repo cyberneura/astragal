@@ -205,6 +205,20 @@ release, so it can take up to an hour for a new version to show up in `brew`. Th
 for the new version (`.github/workflows/winget.yml`, which needs the `WINGET_TOKEN`
 secret); see [docs/winget.md](docs/winget.md).
 
+## Third-party licenses
+
+`THIRD-PARTY-NOTICES.txt` lists the licenses of the libraries bundled into the app: every
+Rust crate compiled into the macOS and Windows binaries, and the npm packages named in
+`dependencies` in `package.json` (they bring no further runtime packages of their own). It is
+compiled into the app and shown by "Third-Party Licenses" in the tray menu. Regenerate it
+after adding or updating a dependency; the Rust tests fail if a direct dependency is missing
+from it.
+
+```shell
+cargo install cargo-about --locked --features cli   # once
+pnpm notices
+```
+
 ## Tests
 
 ```shell

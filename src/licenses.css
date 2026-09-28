@@ -1,0 +1,32 @@
+/* ── Third-party licenses window ────────────────────────────────────────── */
+
+#licenses {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 16px 20px;
+}
+
+#licenses-intro {
+  flex: none;
+  margin-bottom: 12px;
+  color: #c8c8c8;
+}
+
+/* 本文は長いので、この要素だけをスクロールさせる (styles.css は overflow を隠す) */
+#licenses-text {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid #2c2c2c;
+  border-radius: 6px;
+  background: #0b0b0b;
+  color: #d0d0d0;
+  font-family: Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  user-select: text;
+  -webkit-user-select: text;
+}

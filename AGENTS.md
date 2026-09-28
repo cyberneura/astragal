@@ -27,11 +27,21 @@ public リポジトリなので、**README・UI 文字列・エラーメッセ�
 | `src/search.ts` | Cmd+F の検索バー (xterm-addon-search)。ウインドウに 1 つで、アクティブなタブを検索する |
 | `src/main.ts` / `src/small.ts` | メインウインドウ / 吹き出しの入口 |
 | `src/about.ts` | トレイメニューの About から開くウインドウ |
+| `src/licenses.ts` | トレイメニューの Third-Party Licenses から開くウインドウ (`THIRD-PARTY-NOTICES.txt` を表示) |
 | `resources/app-icons/` | アイコンのマスター素材と `generate.py` / `inspect_icns.py` |
 
 常駐ウインドウは 2 つある。`main` (タブ付き) と `small` (メニューバーアイコン直下に出る
-吹き出し)。挙動が違うので、片方だけ直して済ませないこと。`about` は開くたびに作り、
+吹き出し)。挙動が違うので、片方だけ直して済ませないこと。`about` と `licenses` は開くたびに作り、
 閉じると破棄される。
+
+## 依存ライブラリのライセンス表示
+
+`THIRD-PARTY-NOTICES.txt` は `scripts/generate-third-party-notices.sh` (`pnpm notices`) の生成物で、
+`lib.rs` が `include_str!` で埋め込み、トレイメニューの Third-Party Licenses (`licenses` ウインドウ)
+に出す。**依存を足す・上げる時は流し直してコミットする** (直接依存が載っていないと `cargo test` が
+落ちる)。Rust 側は cargo-about で、`src-tauri/about.toml` の `targets` で配布ターゲット
+(mac / Windows) だけに絞っている。cargo-about は `--features cli` を付けないとバイナリが入らない。
+npm 側は `package.json` の `dependencies` だけ (devDependencies は配布物に入らない)。
 
 ## キーバインド
 
@@ -146,7 +156,7 @@ GitHub Release を公開するので、**PR に version bump を含めるとマ�
 ### 非表示ウインドウで requestAnimationFrame を待たない
 
 webview の初期背景は白なので、新しいウインドウは `visible(false)` で作り、front が DOM を
-埋めてからコマンドで show している (`about`)。この「show してもらう合図」を
+埋めてからコマンドで show している (`about` / `licenses`)。この「show してもらう合図」を
 `requestAnimationFrame` の中で送ると永遠に出ない。WebKit は見えていないページの
 フレームを止めるため。DOM 更新の直後にそのまま invoke する。
 
