@@ -162,9 +162,20 @@ webview の初期背景は白なので、新しいウインドウは `visible(fa
 
 ### アイコン
 
-用途ごとに余白と色の扱いが違う。手順は `README.md` の「アイコン」を参照。
+用途ごとに余白と色の扱いが違う。手順は `README.md` の「Icons」を参照。
 `pnpm tauri icon` は `src-tauri/icons/` を毎回まるごと上書きするので、単発で流すと
-mac 用の余白が黙って消える。
+mac 用の余白と、Windows 用に拡大した図柄が黙って消える。
+
+**Windows のアプリアイコン (`icon.ico`) は専用のマスター `astragal-win-icon` から作る**
+(CYBERNEURA-DEV-884)。背景を full-bleed にするだけでは足りず、図柄そのものを背景の 86%
+まで拡大している (`generate.py` の `WIN_MARK_FILL_PERCENT`)。暗い背景は Windows のダークな
+タスクバーに溶けるので、見た目の大きさは明るい図柄で決まり、macOS と同じ配置 (高さ 68%)
+では他のアプリより小さく見えていた。macOS の icns と `32x32.png` 等の素の PNG は変えていない。
+
+`icon.ico` の**先頭のエントリ**がウインドウアイコン (タイトルバー / Alt-Tab) に使われる
+(tauri-codegen の `CachedIcon::new_ico` が `entries()[0]` を取る)。`tauri icon` は 32px を
+先頭に書く。NSIS のインストーラーは `bundle.windows.nsis.installerIcon` を指定しないと
+NSIS 既定のアイコンになる (v0.8.0 までの setup.exe はそうだった)。
 
 `src-tauri/icons/icon.icns` の中身は `resources/app-icons/inspect_icns.py` で一覧できる
 (標準ライブラリのみ。16〜512px に抜けがあれば exit 1。1024px は「あると良い」扱いで、

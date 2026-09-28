@@ -28,6 +28,11 @@ CHEVRON = (41.0, 17.0, 15.0, 11.0)  # x, 幅, 半分の高さ, 太さ
 RADIUS_PERCENT = 20.0
 # トレイ用に図柄が占める割合。メニューバーでは高さが効くので長辺基準。
 TRAY_FILL_PERCENT = 88.0
+# Windows のアプリアイコンでは図柄を背景いっぱいまで拡大する (CYBERNEURA-DEV-884)。
+# 背景だけ full-bleed にしても、図柄が背景の半分しか無いと小さく見える。
+# 暗い背景は Windows のダークなタスクバーに溶けるので、目に入るのは図柄の大きさになる。
+# 値は背景に対する図柄の長辺 (高さ) の割合。
+WIN_MARK_FILL_PERCENT = 86.0
 
 
 def _doorway(cy=50.0):
@@ -64,10 +69,30 @@ MARK_BOX = (
 )
 
 
-def svg_plate(margin_percent):
+def _mark_transform(fill_percent):
+    """図柄を背景の中央へ、長辺が `fill_percent` になるよう置く transform。"""
+    x0, x1, y0, y1 = MARK_BOX
+    w, h = x1 - x0, y1 - y0
+    s = fill_percent / max(w, h)
+    tx = (100 - w * s) / 2 - x0 * s
+    ty = (100 - h * s) / 2 - y0 * s
+    return f"translate({tx:.3f},{ty:.3f}) scale({s:.4f})"
+
+
+def svg_plate(margin_percent, mark_fill_percent=None):
+    """角丸の背景に図柄を載せる。
+
+    `mark_fill_percent` を渡すと、図柄を元の配置ではなく背景に対するその割合まで
+    拡大して中央に置く。省略時は元の配置 (macOS / favicon と同じ見た目) のまま。
+    """
     inner = 100 - 2 * margin_percent
     scale = inner / 100
     radius = RADIUS_PERCENT / 100 * inner
+    mark_transform = (
+        f' transform="{_mark_transform(mark_fill_percent)}"'
+        if mark_fill_percent is not None
+        else ""
+    )
     return (
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" '
         'width="100" height="100">'
@@ -75,21 +100,16 @@ def svg_plate(margin_percent):
         f'width="{inner}" height="{inner}" '
         f'rx="{radius}" ry="{radius}" fill="{PLATE}"/>'
         f'<g transform="translate({margin_percent},{margin_percent}) scale({scale})">'
-        f'<path d="{MARK}" fill="{LIGHT}" fill-rule="evenodd"/>'
+        f'<path d="{MARK}" fill="{LIGHT}" fill-rule="evenodd"{mark_transform}/>'
         "</g></svg>"
     )
 
 
 def svg_tray():
-    x0, x1, y0, y1 = MARK_BOX
-    w, h = x1 - x0, y1 - y0
-    s = TRAY_FILL_PERCENT / max(w, h)
-    tx = (100 - w * s) / 2 - x0 * s
-    ty = (100 - h * s) / 2 - y0 * s
     return (
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" '
         'width="100" height="100">'
-        f'<g transform="translate({tx:.3f},{ty:.3f}) scale({s:.4f})">'
+        f'<g transform="{_mark_transform(TRAY_FILL_PERCENT)}">'
         f'<path d="{MARK}" fill="#000000" fill-rule="evenodd"/>'
         "</g></svg>"
     )
@@ -98,8 +118,10 @@ def svg_tray():
 TARGETS = {
     # macOS のアプリアイコンだけ背景に余白を空ける。空けないと Dock で他アプリより大きく見える。
     "astragal-mac-icon": (svg_plate(10.0), 1024),
-    # Windows / Web は full-bleed。余白を入れるとタスクバーで実効サイズが落ちる。
+    # Web 向けは full-bleed。図柄の配置は macOS と同じ。
     "astragal-favicon": (svg_plate(0.0), 1024),
+    # Windows のアプリアイコン (icon.ico)。背景は full-bleed で、図柄も背景いっぱいまで拡大する。
+    "astragal-win-icon": (svg_plate(0.0, WIN_MARK_FILL_PERCENT), 1024),
     # macOS メニューバー用。template 画像はアルファしか使われないので単色 + 透過。
     "tray-mac": (svg_tray(), 256),
     # Windows トレイには template の概念が無いのでカラーのまま。
