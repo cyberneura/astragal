@@ -229,30 +229,45 @@ pnpm exec tsc --noEmit
 ## Icons
 
 The masters live in `resources/app-icons/` and are rendered from SVG by `generate.py`
-(which needs `rsvg-convert`). There are four of them because padding and color are
-handled differently per use.
+(which needs `rsvg-convert`). There are five of them because padding, artwork size and
+color are handled differently per use.
 
 | File | Use |
 |---|---|
 | `astragal-mac-icon.png` | macOS app icon. 10% padding around the artwork |
-| `astragal-favicon.png` | Windows / web. No padding |
+| `astragal-win-icon.png` | Windows app icon (`icon.ico`, Square/Store logos). No padding, and the artwork is enlarged to fill the plate |
+| `astragal-favicon.png` | Web, and the plain PNGs (`32x32.png` etc.). No padding, artwork laid out as on macOS |
 | `tray-mac.png` | Menu bar. Monochrome + transparency (a template image) |
 | `tray-win.png` | Windows tray. Full color |
 
+The Windows icon enlarges the artwork itself, not just the plate. The dark plate
+blends into a dark Windows taskbar, so what reads as the icon's size there is the
+light artwork; at its macOS proportions it looked small next to other apps.
+
 Apply them to `src-tauri/icons/` in the order below. `pnpm tauri icon` overwrites the
 whole of `src-tauri/icons/` every time, so running it once on its own silently drops the
-padding on the macOS icon.
+padding on the macOS icon and the enlarged artwork on the Windows icon.
 
 ```shell
 python3 resources/app-icons/generate.py
 
 pnpm tauri icon "$PWD/resources/app-icons/astragal-favicon.png"
 rm -rf src-tauri/icons/android src-tauri/icons/ios
+
+# Windows-only assets come from the Windows master
+tmp=$(mktemp -d)
+pnpm tauri icon "$PWD/resources/app-icons/astragal-win-icon.png" -o "$tmp"
+cp "$tmp"/icon.ico "$tmp"/Square*Logo.png "$tmp"/StoreLogo.png src-tauri/icons/
+rm -rf "$tmp"
+
 python3 resources/app-icons/build_icns.py \
   resources/app-icons/astragal-mac-icon.png src-tauri/icons/icon.icns
 
 cp resources/app-icons/tray-mac.png resources/app-icons/tray-win.png src-tauri/icons/
 ```
+
+`icon.ico` is also the NSIS installer icon (`bundle.windows.nsis.installerIcon`).
+Without that setting the installer shows the stock NSIS icon.
 
 To see which resolutions the generated `.icns` actually holds — useful when an icon
 looks soft somewhere and you need to tell whether the bundle is at fault — run:
