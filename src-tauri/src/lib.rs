@@ -13,6 +13,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewWindow,
 };
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 // ── Pty Session ──────────────────────────────────────────────────────────────
@@ -987,11 +988,10 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 /// tauri-plugin-autostart は使わない。登録する実行ファイルのパスを加工できず、
 /// 下記 `autostart_program` / `check_registrable` の問題を避けられないため。
 fn autostart_entry(app: &AppHandle) -> Result<auto_launch::AutoLaunch, String> {
+    // canonicalize しない。シンボリックリンク越しに置かれたアプリで版ごとの実体のパスを
+    // 登録すると、更新で旧版が消えた時に起動しなくなる。Windows では `\\?\` 付きの
+    // パスになり、Run レジストリの値としても使えない
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    // macOS はシンボリックリンクを辿った実体を登録する。Windows で canonicalize すると
-    // `\\?\` 付きのパスになり、Run レジストリの値として使えない
-    #[cfg(target_os = "macos")]
-    let exe = exe.canonicalize().map_err(|e| e.to_string())?;
     let mut builder = auto_launch::AutoLaunchBuilder::new();
     builder
         .set_app_name(&app.package_info().name)
@@ -1065,11 +1065,16 @@ fn toggle_autostart(app: &AppHandle, item: &CheckMenuItem<tauri::Wry>) {
         };
         changed.map_err(|e| e.to_string())
     });
+    // トレイからの操作なのでウインドウが出ていないことが多い。warn() はターミナルを開いた
+    // 時にしか表示されないので、ダイアログで知らせる
     if let Err(e) = result {
-        warn(
-            app,
-            format!("Failed to change the launch-at-login setting: {e}"),
-        );
+        let message = format!("Failed to change the launch-at-login setting: {e}");
+        eprintln!("astragal: {message}");
+        app.dialog()
+            .message(message)
+            .title("Launch at Login")
+            .kind(MessageDialogKind::Error)
+            .show(|_| {});
     }
     let _ = item.set_checked(autostart_enabled(app));
 }
@@ -1302,6 +1307,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             // 起動済みのところへ自動起動が重なった時は、ウインドウを出さない
             if launched_minimized(&args) {
