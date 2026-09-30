@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{
-    menu::{MenuBuilder, MenuItemBuilder},
+    menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewWindow,
 };
@@ -84,6 +84,13 @@ const BLUR_HIDE_GUARD: Duration = Duration::from_millis(250);
 const CURSOR_DRIFT_TOLERANCE: f64 = 8.0;
 /// main / small を表示した時に、そのウインドウへ送るイベント
 const WINDOW_SHOWN_EVENT: &str = "window-shown";
+/// ログイン時の自動起動で付ける引数。付いていたら main を出さずメニューバーだけに常駐する
+const MINIMIZED_ARG: &str = "--minimized";
+
+/// メニューバーだけに常駐した状態で起動するか (ログイン時の自動起動)
+fn launched_minimized<I: IntoIterator<Item = S>, S: AsRef<str>>(args: I) -> bool {
+    args.into_iter().any(|arg| arg.as_ref() == MINIMIZED_ARG)
+}
 
 // ── Commands ─────────────────────────────────────────────────────────────────
 
@@ -903,11 +910,16 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let separator = tauri::menu::PredefinedMenuItem::separator(app)?;
     let about = MenuItemBuilder::with_id("about", "About Astragal").build(app)?;
     let licenses = MenuItemBuilder::with_id("licenses", "Third-Party Licenses").build(app)?;
+    let autostart = CheckMenuItemBuilder::with_id("autostart", "Launch at Login")
+        .checked(autostart_enabled(app))
+        .build(app)?;
     let close = MenuItemBuilder::with_id("close", "Close").build(app)?;
 
     let menu = MenuBuilder::new(app)
         .item(&show_small)
         .item(&toggle)
+        .item(&separator)
+        .item(&autostart)
         .item(&separator)
         .item(&about)
         .item(&licenses)
@@ -938,6 +950,7 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                     eprintln!("astragal: failed to show the licenses window: {e}");
                 }
             }
+            "autostart" => toggle_autostart(app, &autostart),
             "close" => {
                 app.exit(0);
             }
@@ -966,6 +979,99 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .build(app)?;
 
     Ok(())
+}
+
+/// ログイン時の自動起動の登録。macOS は `~/Library/LaunchAgents` の plist、Windows は
+/// Run レジストリ。登録の有無は OS 側にしか無い (アプリの設定には持たない)。
+///
+/// tauri-plugin-autostart は使わない。登録する実行ファイルのパスを加工できず、
+/// 下記 `autostart_program` / `check_registrable` の問題を避けられないため。
+fn autostart_entry(app: &AppHandle) -> Result<auto_launch::AutoLaunch, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    // macOS はシンボリックリンクを辿った実体を登録する。Windows で canonicalize すると
+    // `\\?\` 付きのパスになり、Run レジストリの値として使えない
+    #[cfg(target_os = "macos")]
+    let exe = exe.canonicalize().map_err(|e| e.to_string())?;
+    let mut builder = auto_launch::AutoLaunchBuilder::new();
+    builder
+        .set_app_name(&app.package_info().name)
+        .set_app_path(&autostart_program(&exe.display().to_string()))
+        .set_args(&[MINIMIZED_ARG]);
+    // AppleScript のログイン項目は引数を渡せず、メニューバーだけで起動できない
+    #[cfg(target_os = "macos")]
+    builder.set_use_launch_agent(true);
+    builder.build().map_err(|e| e.to_string())
+}
+
+/// 自動起動に登録する実行ファイルの表記。auto-launch 0.5 は Windows の Run に
+/// `パス 引数` をそのまま書くので、空白を含むパス (per-user インストールでユーザー名に
+/// 空白がある等) が途中で切れる。引用符で囲む。
+#[cfg(windows)]
+fn autostart_program(exe: &str) -> String {
+    quote_windows_program(exe)
+}
+
+#[cfg(not(windows))]
+fn autostart_program(exe: &str) -> String {
+    exe.to_string()
+}
+
+/// 新しく登録してよいパスか。auto-launch 0.5 は macOS の plist へパスを XML エスケープ
+/// せずに埋め込むので、`&` `<` `>` を含むと壊れた plist ができ、登録は成功扱いのまま
+/// 起動しない。エスケープすると今度は auto-launch の存在確認に通らないので、登録を断る。
+///
+/// 確認と解除には掛けない。登録後にアプリを移すと、残った登録を外せなくなるため。
+fn check_registrable(entry: &auto_launch::AutoLaunch) -> Result<(), String> {
+    let path = entry.get_app_path();
+    if cfg!(target_os = "macos") && !plist_safe(path) {
+        return Err(format!(
+            "The app's path contains a character that cannot be registered (& < >): {path}"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn quote_windows_program(exe: &str) -> String {
+    format!("\"{exe}\"")
+}
+
+fn plist_safe(path: &str) -> bool {
+    !path.contains(['&', '<', '>'])
+}
+
+/// ログイン時の自動起動が有効か
+fn autostart_enabled(app: &AppHandle) -> bool {
+    match autostart_entry(app).and_then(|entry| entry.is_enabled().map_err(|e| e.to_string())) {
+        Ok(enabled) => enabled,
+        Err(e) => {
+            eprintln!("astragal: failed to read the launch-at-login setting: {e}");
+            false
+        }
+    }
+}
+
+/// 自動起動を切り替え、チェックを実際の状態に合わせ直す。
+///
+/// CheckMenuItem はクリックの時点で自分のチェックを反転させるので、切り替えに
+/// 失敗すると表示と実態がずれる。反転後の表示ではなく OS 側の状態から決める。
+fn toggle_autostart(app: &AppHandle, item: &CheckMenuItem<tauri::Wry>) {
+    let result = autostart_entry(app).and_then(|entry| {
+        let changed = if entry.is_enabled().map_err(|e| e.to_string())? {
+            entry.disable()
+        } else {
+            check_registrable(&entry)?;
+            entry.enable()
+        };
+        changed.map_err(|e| e.to_string())
+    });
+    if let Err(e) = result {
+        warn(
+            app,
+            format!("Failed to change the launch-at-login setting: {e}"),
+        );
+    }
+    let _ = item.set_checked(autostart_enabled(app));
 }
 
 /// 論理ポイントのアンカーが、このモニタの矩形に入るか。
@@ -1196,7 +1302,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // 起動済みのところへ自動起動が重なった時は、ウインドウを出さない
+            if launched_minimized(&args) {
+                return;
+            }
             if let Some(win) = app.get_webview_window("main") {
                 let _ = move_to_cursor_monitor(&win);
                 let _ = present_window(&win);
@@ -1258,8 +1368,12 @@ pub fn run() {
                 if main_spec.hide_on_blur {
                     hide_on_blur(&win, || {});
                 }
-                win.show()?;
-                let _ = win.set_focus();
+                // 自動起動ではメニューバーだけに常駐する。main はトレイメニューか
+                // ホットキーで出す (present_window が front に表示を伝える)
+                if !launched_minimized(std::env::args()) {
+                    win.show()?;
+                    let _ = win.set_focus();
+                }
             }
 
             Ok(())
@@ -1811,6 +1925,31 @@ mod tests {
             small.mods,
             Modifiers::CONTROL | Modifiers::SHIFT | Modifiers::ALT | Modifiers::SUPER
         );
+    }
+
+    #[test]
+    fn minimized_only_with_the_autostart_argument() {
+        assert!(launched_minimized([
+            "/Applications/Astragal.app/Contents/MacOS/astragal",
+            "--minimized",
+        ]));
+        assert!(!launched_minimized(["astragal"]));
+        assert!(!launched_minimized(["astragal", "--minimize"]));
+    }
+
+    #[test]
+    fn windows_autostart_program_is_quoted() {
+        assert_eq!(
+            quote_windows_program(r"C:\Users\Jane Doe\AppData\Local\Astragal\astragal.exe"),
+            r#""C:\Users\Jane Doe\AppData\Local\Astragal\astragal.exe""#
+        );
+    }
+
+    #[test]
+    fn plist_unsafe_paths_are_detected() {
+        assert!(plist_safe("/Applications/Astragal.app"));
+        assert!(!plist_safe("/Applications/Tools & Apps/Astragal.app"));
+        assert!(!plist_safe("/Users/a/<x>/Astragal.app"));
     }
 
     #[test]

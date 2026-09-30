@@ -153,6 +153,26 @@ GitHub Release を公開するので、**PR に version bump を含めるとマ�
 ちらつき防止。**アプリメニューは描画されなくなるが Cmd+C / Cmd+V は効く**
 (`NSApp` の main menu オブジェクトは残り `performKeyEquivalent:` が辿るため)。
 
+### ログイン時の自動起動
+
+トレイメニューの Launch at Login は `auto-launch` crate で、macOS は
+`~/Library/LaunchAgents/Astragal.plist`、Windows は Run レジストリに登録する
+(CYBERNEURA-DEV-894)。登録には `--minimized` が付き、これで起動すると main を出さずに
+メニューバーだけに常駐する (`launched_minimized`)。
+
+- **macOS は LaunchAgent 方式に固定している。** AppleScript のログイン項目は引数を
+  渡せず、`--minimized` が届かない
+- **tauri-plugin-autostart は使っていない。** 中身は同じ auto-launch だが、登録する
+  パスを加工できない。auto-launch 0.5 はパスをそのまま書くので、Windows は引用符で囲み
+  (空白入りのパスが途中で切れる)、macOS は `& < >` を含むパスの登録を断っている
+  (plist に XML エスケープせずに埋め込まれ、壊れた plist が「登録成功」になる)。
+  `autostart_program` / `check_registrable` を参照。登録を断るのは有効化の時だけで、
+  確認・解除には掛けない (登録後にアプリを移すと残った登録を外せなくなる)。auto-launch を上げる時はこの 2 点が直っていないか見る
+- 有効かどうかはアプリの設定に持たず、毎回 OS 側 (plist / レジストリの有無) から読む。
+  チェックの表示も切り替え後に読み直して合わせる
+- plist / レジストリにはその時の実行ファイルのパスが書かれる。dev ビルドで有効にすると
+  dev のバイナリが登録されるので、確認後は OFF に戻すこと
+
 ### 非表示ウインドウで requestAnimationFrame を待たない
 
 webview の初期背景は白なので、新しいウインドウは `visible(false)` で作り、front が DOM を
