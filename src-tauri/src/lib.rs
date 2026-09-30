@@ -921,7 +921,9 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .item(&toggle)
         .item(&separator)
         .item(&autostart)
-        .item(&separator)
+        // 同じ PredefinedMenuItem を 2 回入れると、macOS では 1 つの NSMenuItem を 2 か所に
+        // 置くことになり壊れる。2 本目は別のインスタンスにする
+        .separator()
         .item(&about)
         .item(&licenses)
         .item(&close)
