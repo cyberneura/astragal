@@ -18,6 +18,7 @@ import {
   syncSearchWithActiveTab,
 } from "./search";
 import { IS_WINDOWS, shortcutLabel } from "./platform";
+import { closeAi, initAi, openAi, syncAiWithActiveTab } from "./ai";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -192,6 +193,7 @@ function showTab(tabId: number): boolean {
     fitLater(tab, true);
   });
   syncSearchWithActiveTab();
+  syncAiWithActiveTab();
   return true;
 }
 
@@ -249,6 +251,7 @@ async function closeTab(tabId: number) {
     } else {
       activeTabId = null;
       closeSearch();
+      closeAi();
     }
   }
 
@@ -530,6 +533,10 @@ function handleWindowsKeydown(e: KeyboardEvent): void {
       consume(e);
       clearActiveTerminal();
       break;
+    case "KeyI":
+      consume(e);
+      openAi();
+      break;
     case "KeyC":
       consume(e);
       copySelection();
@@ -561,6 +568,9 @@ function handleKeydown(e: KeyboardEvent) {
   } else if (e.key === "k" && !e.shiftKey) {
     e.preventDefault();
     clearActiveTerminal();
+  } else if (e.key === "i" && !e.shiftKey) {
+    e.preventDefault();
+    openAi();
   } else if (e.key === "g" || e.key === "G") {
     // macOS は Cmd を押している間 Shift を文字へ適用しないことがあるので両方受ける
     e.preventDefault();
@@ -595,6 +605,7 @@ export async function initTabs(ui: TabElements, config: AppConfig): Promise<void
   ui.newTabButton.addEventListener("click", () => createTab());
   ui.newTabButton.title = `New tab (${shortcutLabel("⌘T", "Ctrl+Shift+T")})`;
   initSearch(ui.terminalsContainer, () => activeTab()?.session);
+  initAi(ui.terminalsContainer, config.ai_enabled, () => activeTab()?.session);
   document.addEventListener("keydown", handleCycleKeydown, true);
   document.addEventListener("keyup", handleCycleKeyup, true);
   // ウインドウが背面へ回ると Ctrl の keyup が届かない (吹き出しは blur で隠れる)。

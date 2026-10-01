@@ -25,6 +25,9 @@ A lightweight terminal app for macOS and Windows (Tauri 2.x + xterm.js).
 - Launch at Login in the menu bar icon's right-click menu starts Astragal when you log in,
   with only the menu bar icon (no main window). Open the main window from the same menu or
   with the hotkey
+- Ask AI (optional, off by default): press Cmd+I, describe what you want to do, and a
+  shell command is typed into the prompt for you to check and run yourself. See
+  [Ask AI](#ask-ai)
 - Configuration through `~/.config/astragal/config.yaml`
 
 ## Install
@@ -74,6 +77,7 @@ too, with these differences:
   | Cmd+F (search) | Ctrl+Shift+F |
   | Cmd+G / Cmd+Shift+G (next / previous match) | F3 / Shift+F3 (while the search bar is open) |
   | Cmd+K (clear screen and scrollback) | Ctrl+Shift+K |
+  | Cmd+I (Ask AI) | Ctrl+Shift+I |
   | Cmd+= / Cmd+- / Cmd+0 (font size) | Ctrl+= / Ctrl+- / Ctrl+0 |
   | Cmd+C / Cmd+V | Ctrl+Shift+C / Ctrl+Shift+V. Ctrl+C copies when text is selected (otherwise it interrupts), Ctrl+V pastes |
   | Cmd+click a URL | Ctrl+click a URL |
@@ -133,6 +137,12 @@ window:
 theme: # xterm theme; only the keys you write are overridden
   background: "#111111"
   foreground: "#e6e6e6"
+
+ai: # Ask AI (Cmd+I). Off by default
+  enabled: false
+  api_key: "" # defaults to the ANTHROPIC_API_KEY environment variable
+  model: claude-opus-5
+  effort: low # sent as output_config.effort; "" to leave it out
 ```
 
 Hotkey modifiers are `Control` / `Option` (`Alt`) / `Shift` / `Command` (`Cmd`, `Super`).
@@ -144,6 +154,39 @@ combination.
 
 Set the `ASTRAGAL_CONFIG` environment variable to a config file path to start using that
 file instead.
+
+### Ask AI
+
+Press Cmd+I (Ctrl+Shift+I on Windows), write what you want to do in plain words
+("find files over 100 MB under here", "undo the last git commit but keep the changes"),
+and press Enter. Astragal asks Claude for a single shell command and shows it in the bar.
+Press Enter again to type it into the prompt of the tab you opened the bar in. **It never
+presses Enter in the terminal for you** — read the command, edit it if needed, and run it
+yourself. Esc closes the bar, and so does switching tabs.
+
+Select some terminal output (an error message, say) before pressing Cmd+I to send it
+along as context ("fix this"). The bar tells you when a selection will be sent.
+
+It is off until you turn it on, because it sends text to an outside service:
+
+```yaml
+ai:
+  enabled: true
+```
+
+- **What is sent** to the Anthropic API: what you typed in the bar, the OS and shell
+  names, and the terminal text you had selected when you opened the bar (if any). Nothing
+  else from the terminal is sent.
+- **API key**: `ai.api_key`, or the `ANTHROPIC_API_KEY` environment variable when that is
+  empty. Apps started from Finder or the Dock do not see variables set in your shell
+  profile, so prefer putting the key in the YAML printed by
+  [config_override_command](#config_override_command), e.g. a 1Password item holding
+  `ai: {api_key: sk-ant-...}`.
+- **Model**: `claude-opus-5` with `effort: low` by default. For quicker answers set
+  `model: claude-haiku-4-5` and `effort: ""` (Haiku does not accept the effort setting).
+- An answer that spans several lines or contains control characters is shown as an error
+  instead of being typed in, so nothing can run before you see it. Nothing is typed in
+  while a full-screen program such as vim is showing either.
 
 ### config_override_command
 
