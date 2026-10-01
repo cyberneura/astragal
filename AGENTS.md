@@ -24,6 +24,7 @@ public リポジトリなので、**README・UI 文字列・エラーメッセ�
 | `src/terminal.ts` | xterm の生成とテーマ適用 |
 | `src/links.ts` | URL の検出と Cmd+クリックでの起動 |
 | `src/tabs.ts` | タブ管理、Cmd 系キーバインド、Ctrl+Tab のタブ巡回、Cmd+Shift+[ / ] のタブ移動、Cmd+K のクリア |
+| `src/ai.ts` / `src-tauri/src/ai.rs` | Cmd+I の Ask AI (依頼からシェルコマンドを 1 行作り、プロンプトに貼り付ける。既定は無効) |
 | `src/search.ts` | Cmd+F の検索バー (xterm-addon-search)。ウインドウに 1 つで、アクティブなタブを検索する |
 | `src/main.ts` / `src/small.ts` | メインウインドウ / 吹き出しの入口 |
 | `src/about.ts` | トレイメニューの About から開くウインドウ |
@@ -88,6 +89,28 @@ Cmd+K (Windows は Ctrl+Shift+K) は `terminal.clear()` で、シェルには何
 `xterm-addon-search` 0.13 は行テキストのキャッシュをカーソル移動でしか捨てず、
 プロンプトが同じ位置へ戻ると新しい出力が検索に掛からない。`createSearchAddon` が
 書き込みのたびに非公開の `_destroyLinesCache` を呼んで回避している。
+
+## Ask AI (CYBERNEURA-DEV-898)
+
+Warp の自然言語コマンド入力に相当する機能。設計上の不変条件:
+
+- **既定は無効** (`ai.enabled: false`)。外部へテキストを送る機能なので、依頼者の指示で
+  スイッチにしている。無効ならバーも作らず Cmd+I は何もしない
+- **実行しない。** 応答はまずバーに表示し、もう一度 Enter で `terminal.paste()` するだけ。
+  pty に Enter は送らない。表示を挟むのは、貼り付け先がシェルのプロンプトか確かめる手段が
+  無いため (代替バッファかどうかしか分からない)。
+  改行・制御文字を含む応答は `ai.rs` の `parse_reply` で弾く (改行は pty では Enter と同じ)。
+  代替バッファ (vim 等) の表示中も打ち込まない
+- **送るのは依頼文・OS 名・シェル名・バーを開いた時の選択テキストだけ。** スクロールバックを
+  黙って送らない。選択を送る時はバーに表示する
+- 対象タブと選択はバーを開いた時に固定し、タブが切り替わったら閉じる (`syncAiWithActiveTab`)。
+  別タブの選択を送る・見えていないタブへ貼り付ける、を防ぐため
+- API キーは Rust 側だけに置き、`FrontendConfig` には `ai_enabled` しか渡さない。
+  `AiConfig` の Debug はキーを伏せている
+- HTTP は reqwest (tauri が既に引いている 0.13) を `native-tls` で使う。既定の rustls は
+  aws-lc-rs を引き、Windows のビルドに cmake / nasm が要るため避けた
+- 既定モデルは `claude-opus-5` + `effort: low`。モデルを変える時、Haiku 4.5 のように
+  effort を受け付けないモデルは `effort: ""` が要る (送ると 400)
 
 ## コマンド
 

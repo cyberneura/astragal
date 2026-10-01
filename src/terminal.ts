@@ -18,6 +18,8 @@ export interface AppConfig {
   shell_name: string;
   config_path: string;
   warning: string | null;
+  /** Ask AI (Cmd+I) を出すか (ai.ts) */
+  ai_enabled: boolean;
 }
 
 export interface Session {

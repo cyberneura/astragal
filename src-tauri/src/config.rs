@@ -32,6 +32,13 @@ const DEFAULT_FONT_FAMILY: &str = "'RobotoMono Nerd Font', 'Roboto Mono', Menlo,
 /// インストールが要る)。
 const WINDOWS_DEFAULT_SHELL: &str = "powershell.exe";
 
+/// Ask AI の既定モデル。短い 1 行を返すだけなので effort は low にして待ち時間を詰める。
+/// 速さを優先したければ `ai.model: claude-haiku-4-5` と `ai.effort: ""` を書く。
+const DEFAULT_AI_MODEL: &str = "claude-opus-5";
+const DEFAULT_AI_EFFORT: &str = "low";
+/// `ai.api_key` が空の時に読む環境変数。
+const AI_API_KEY_ENV: &str = "ANTHROPIC_API_KEY";
+
 const MAIN_WINDOW_DEFAULT: ResolvedWindow = ResolvedWindow {
     width: 900.0,
     height: 580.0,
@@ -99,6 +106,19 @@ const CONFIG_TEMPLATE: &str = r##"# Astragal config file
 #   foreground: "#e6e6e6"
 #   cursor: "#ffffff"
 
+# Ask AI (Cmd+I, Ctrl+Shift+I on Windows): describe what you want to do and get a
+# shell command typed into the prompt for you to review. It never runs anything by
+# itself. Off by default. What is sent to Anthropic: your request, the OS and shell
+# names, and the terminal text you had selected when you opened the bar (if any).
+# ai:
+#   enabled: true
+#   # Defaults to the ANTHROPIC_API_KEY environment variable. Rather than writing the
+#   # key here, put it in the YAML that config_override_command prints.
+#   api_key: ""
+#   model: claude-opus-5
+#   # Sent as output_config.effort. Use "" for models without effort (claude-haiku-4-5).
+#   effort: low
+
 # config_override_command runs a command whose stdout must be YAML, and merges
 # that YAML over this file. Mappings are merged recursively; scalars and lists
 # are replaced wholesale.
@@ -121,6 +141,61 @@ pub struct Config {
     pub hotkeys: HotkeyConfig,
     /// xterm の theme にそのまま渡す。既定テーマの上にキー単位で被せる。
     pub theme: BTreeMap<String, String>,
+    pub ai: AiConfig,
+}
+
+/// Cmd+I のコマンド提案 (Ask AI)。既定は無効で、`enabled: true` を書いた時だけ動く。
+///
+/// 有効にしても、ターミナルの内容を勝手に送ることはしない。送るのは入力欄に書いた依頼と
+/// OS・シェルの名前、それに入力欄を開いた時に選択していたテキストだけ (選択していれば
+/// 入力欄にその旨を出す)。
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AiConfig {
+    pub enabled: bool,
+    /// Anthropic の API キー。空なら環境変数 `ANTHROPIC_API_KEY` を使う。
+    /// 設定ファイルに直に書かず `config_override_command` で 1Password 等から引く想定。
+    pub api_key: String,
+    pub model: String,
+    /// `output_config.effort`。空文字なら送らない (effort を受け付けないモデル用)。
+    pub effort: String,
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key: String::new(),
+            model: DEFAULT_AI_MODEL.to_string(),
+            effort: DEFAULT_AI_EFFORT.to_string(),
+        }
+    }
+}
+
+/// API キーをログやパニックのメッセージに出さないよう、Debug では伏せる。
+impl std::fmt::Debug for AiConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AiConfig")
+            .field("enabled", &self.enabled)
+            .field("api_key", &if self.api_key.is_empty() { "" } else { "***" })
+            .field("model", &self.model)
+            .field("effort", &self.effort)
+            .finish()
+    }
+}
+
+impl AiConfig {
+    /// 実際に使う API キー。設定に無ければ環境変数から取る。
+    pub fn resolve_api_key(&self) -> Option<String> {
+        let key = self.api_key.trim();
+        if !key.is_empty() {
+            return Some(key.to_string());
+        }
+        std::env::var(AI_API_KEY_ENV)
+            .ok()
+            .map(|key| key.trim().to_string())
+            .filter(|key| !key.is_empty())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -293,6 +368,10 @@ impl Config {
                 self.font.size
             ));
             self.font.size = FontConfig::default().size;
+        }
+        if self.ai.model.trim().is_empty() {
+            warnings.push("ai.model is empty; using the default".to_string());
+            self.ai.model = DEFAULT_AI_MODEL.to_string();
         }
         warnings
     }
@@ -710,6 +789,56 @@ mod tests {
         // Assert
         assert!(default_config.terminal.close_on_exit);
         assert!(!config.terminal.close_on_exit);
+    }
+
+    #[test]
+    fn ai_is_off_unless_turned_on() {
+        // Arrange
+        let default_doc = mapping("font:\n  size: 18\n");
+        let doc = mapping("ai:\n  enabled: true\n  api_key: sk-test\n");
+
+        // Act
+        let default_config: Config =
+            serde_yaml::from_value(Value::Mapping(default_doc)).expect("should parse");
+        let config: Config = serde_yaml::from_value(Value::Mapping(doc)).expect("should parse");
+
+        // Assert
+        assert!(!default_config.ai.enabled);
+        assert!(config.ai.enabled);
+        assert_eq!(config.ai.model, DEFAULT_AI_MODEL);
+        assert_eq!(config.ai.effort, DEFAULT_AI_EFFORT);
+        assert_eq!(config.ai.resolve_api_key().as_deref(), Some("sk-test"));
+    }
+
+    #[test]
+    fn ai_api_key_is_masked_in_debug_output() {
+        // Arrange
+        let config = AiConfig {
+            api_key: "sk-secret-value".to_string(),
+            ..AiConfig::default()
+        };
+
+        // Act
+        let debug = format!("{config:?}");
+
+        // Assert
+        assert!(!debug.contains("sk-secret-value"));
+        assert!(debug.contains("***"));
+    }
+
+    #[test]
+    fn empty_ai_model_falls_back_to_the_default() {
+        // Arrange
+        let mut config: Config =
+            serde_yaml::from_value(Value::Mapping(mapping("ai:\n  model: \"\"\n")))
+                .expect("should parse");
+
+        // Act
+        let warnings = config.sanitize();
+
+        // Assert
+        assert_eq!(config.ai.model, DEFAULT_AI_MODEL);
+        assert_eq!(warnings.len(), 1);
     }
 
     #[test]

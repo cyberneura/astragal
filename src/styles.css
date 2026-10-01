@@ -308,6 +308,70 @@ html, body {
   color: #e6e6e6;
 }
 
+/* ── Ask AI (Cmd+I) ───────────────────────────────────────────────────────── */
+
+#ai-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: min(560px, calc(100% - 28px));
+  padding: 6px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 40%);
+  transform: translateX(-50%);
+}
+
+#ai-bar[hidden] {
+  display: none;
+}
+
+.ai-input {
+  height: 26px;
+  padding: 0 8px;
+  background: #111111;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  color: #e6e6e6;
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  /* 全体の user-select: none を継ぐと WebKit では入力欄の文字を選択できなくなる */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.ai-input:focus {
+  border-color: #4fa8ff;
+}
+
+#ai-bar.busy .ai-input {
+  border-color: #c77d00;
+}
+
+.ai-note {
+  padding: 0 4px;
+  color: #9a9a9a;
+  font-size: 11px;
+  white-space: pre-wrap;
+  /* エラーの文面をコピーできるように */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.ai-note[hidden] {
+  display: none;
+}
+
+.ai-note.error {
+  color: #ff8a85;
+}
+
 /* ── Startup Error ────────────────────────────────────────────────────────── */
 
 .startup-error,

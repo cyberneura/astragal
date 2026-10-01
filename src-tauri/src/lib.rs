@@ -1,3 +1,4 @@
+mod ai;
 mod config;
 
 use base64::Engine;
@@ -105,6 +106,8 @@ struct FrontendConfig {
     shell_name: String,
     config_path: String,
     warning: Option<String>,
+    /// Ask AI (Cmd+I) を出すか。API キーなど他の ai の設定は webview に渡さない
+    ai_enabled: bool,
 }
 
 #[tauri::command]
@@ -125,7 +128,35 @@ fn get_config(app: AppHandle) -> FrontendConfig {
         shell_name: shell_label(&shell),
         config_path: loaded.path.display().to_string(),
         warning: (!warnings.is_empty()).then(|| warnings.join("\n")),
+        ai_enabled: loaded.config.ai.enabled,
     }
+}
+
+/// Ask AI: 依頼からシェルコマンドを 1 行作ってもらう。打ち込みはフロントが行い、
+/// 実行はしない (ai.rs の冒頭を参照)。
+#[tauri::command]
+async fn ai_suggest_command(
+    app: AppHandle,
+    request: String,
+    selection: Option<String>,
+) -> Result<ai::Suggestion, String> {
+    // State は await を跨いで持てないので、使う値を先に取り出す
+    let (ai_config, shell) = {
+        let state = app.state::<AppState>();
+        let config = &state.config.config;
+        (
+            config.ai.clone(),
+            shell_label(&config.shell.resolve_command()),
+        )
+    };
+    let os = if cfg!(target_os = "windows") {
+        "Windows"
+    } else if cfg!(target_os = "macos") {
+        "macOS"
+    } else {
+        std::env::consts::OS
+    };
+    ai::suggest_command(&ai_config, os, &shell, &request, selection.as_deref()).await
 }
 
 /// タブのラベルに使う、起動するコマンドの名前。Windows の実行ファイルは `.exe` を
@@ -1388,6 +1419,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_config,
+            ai_suggest_command,
             app_info,
             about_window_ready,
             third_party_notices,
