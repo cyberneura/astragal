@@ -149,14 +149,29 @@ async fn ai_suggest_command(
             shell_label(&config.shell.resolve_command()),
         )
     };
-    let os = if cfg!(target_os = "windows") {
+    let host_os = if cfg!(target_os = "windows") {
         "Windows"
     } else if cfg!(target_os = "macos") {
         "macOS"
     } else {
         std::env::consts::OS
     };
-    ai::suggest_command(&ai_config, os, &shell, &request, selection.as_deref()).await
+    let (os, shell) = ai_environment(host_os, &shell);
+    ai::suggest_command(&ai_config, &os, &shell, &request, selection.as_deref()).await
+}
+
+/// Ask AI に伝える OS とシェル。Windows で `shell.command: wsl.exe` (README に載せている
+/// 構成) の時、pty の中は Linux のシェルなので、ホストの Windows を伝えると PowerShell の
+/// 構文や Windows のパスが返ってくる。WSL の既定シェルは distro ごとに違い、外からは
+/// 分からないので「既定のシェル」とだけ書く。
+fn ai_environment(host_os: &str, shell: &str) -> (String, String) {
+    if host_os == "Windows" && shell.eq_ignore_ascii_case("wsl") {
+        return (
+            "Linux (a WSL distribution on Windows; Windows drives are under /mnt)".to_string(),
+            "the distribution's default shell (usually bash)".to_string(),
+        );
+    }
+    (host_os.to_string(), shell.to_string())
 }
 
 /// タブのラベルに使う、起動するコマンドの名前。Windows の実行ファイルは `.exe` を
@@ -1804,6 +1819,20 @@ mod tests {
         // Act / Assert
         assert!(cursor_is_stable(captured, 1.0, (1616.0, 14.0)));
         assert!(!cursor_is_stable(captured, 1.0, (1640.0, 12.0)));
+    }
+
+    #[test]
+    fn ai_environment_describes_wsl_as_linux() {
+        // Act
+        let (wsl_os, wsl_shell) = ai_environment("Windows", "wsl");
+        let (ps_os, ps_shell) = ai_environment("Windows", "powershell");
+        let (mac_os, mac_shell) = ai_environment("macOS", "zsh");
+
+        // Assert
+        assert!(wsl_os.starts_with("Linux"));
+        assert!(wsl_shell.contains("default shell"));
+        assert_eq!((ps_os.as_str(), ps_shell.as_str()), ("Windows", "powershell"));
+        assert_eq!((mac_os.as_str(), mac_shell.as_str()), ("macOS", "zsh"));
     }
 
     #[test]
