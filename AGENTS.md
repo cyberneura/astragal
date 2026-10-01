@@ -228,6 +228,39 @@ quickllm / clipboard-palette (当時の `build_icns.py` 製) は先頭が 16px �
   (手順は `README.md` の「アイコン」)
 - Finder / Dock / NSImage のようにサイズを選んで引く経路は並び順に依存しない
 
+**並び順の仮説は未確認のまま、ダイアログは 16px を出していると分かった (CYBERNEURA-DEV-897)。**
+2026-10-01 に Queryfolio (icns は小さい順、16px は描き分け済み) の同じダイアログの
+スクリーンショットをもらい、アイコンを各エントリの拡大と画素で比べたところ、`icp4` (16px)
+と平均誤差 7.7、`icp5` (32px) とは 28.1 で、**16px のエントリそのものの拡大**だった
+(帯 2 本の 16px 専用の絵がそのまま出ていた)。「Electron は 32px まで取れるので 32px が勝負」
+(DEV-825) はこのダイアログには当てはまらない。依頼者は大きい順の Astragal も
+「同様にボケる」と言っており、そうなら並び順も効いていない。
+
+残る説明は「並び順によらず 16px のエントリを選んでいる」。その場合、16px のエントリを
+抜けば次に小さいエントリが選ばれて鮮明になるのか、それとも 16x16 に縮めて渡されるだけで
+変わらないのかがまだ分からない。これを確かめる道具が `resources/app-icons/probe/` にある
+(macOS で実行する):
+
+```shell
+sh resources/app-icons/probe/build.sh   # build/ に IconProbe-asc / -desc / -no16 の .app
+open -n resources/app-icons/probe/build/IconProbe-asc.app --args <user@host>
+open -n resources/app-icons/probe/build/IconProbe-desc.app --args <user@host>
+open -n resources/app-icons/probe/build/IconProbe-no16.app --args <user@host>
+```
+
+`ssh -T <user@host>` を走らせるだけのアプリで、1Password の SSH キーを使う接続先を渡す
+(既定は `git@github.com`)。**ターミナルから中のバイナリを直接実行しないこと** — ダイアログに
+ターミナルのアイコンが出る。3 つは icns の並び順 (asc = 小さい順 / desc = 大きい順) と
+16px の有無 (no16 は desc から `icp4` を抜いたもの) だけが違い、エントリごとに色を変えた
+2px 角の市松模様を入れてある (色の対応は `make_probe_icns.py` の `ENTRIES`)。
+
+| ダイアログの見え方 | 意味 |
+|---|---|
+| asc が赤、desc が灰 | 先頭のエントリを読んでいる。各アプリの icns を `build_icns.py` で作り直せば直る |
+| asc / desc とも赤 (8x8 マス) | 並び順によらず 16px のエントリを選んでいる。no16 を見る |
+| ↑ かつ no16 が橙か黄で、市松が 16x16 マス | 32px のエントリが届いている。16px を抜けば今より鮮明になる |
+| ↑ かつ no16 が無地 | 大きいエントリを 16x16 に縮めて渡している。バンドル側では 16px より細かくできない |
+
 ## 依存ライブラリの挙動を調べる時
 
 Tauri / tao / tray-icon は、ドキュメントに書かれていない単位系や前提で動いている
