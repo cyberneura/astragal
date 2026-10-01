@@ -310,9 +310,10 @@ open -n resources/app-icons/probe/build/IconProbe-no16.app --args <user@host>
 
 Each runs `ssh -T <user@host>` and exits, so 1Password shows its prompt with the probe's
 icon. They differ only in entry order (smallest first / largest first) and, for `no16`, in
-leaving out the 16px entry; every entry is a checkerboard of 2px cells in its own color
+leaving out the 16px entry; every entry is a checkerboard of 1px cells in its own color
 (see `ENTRIES` in `make_probe_icns.py`). The color tells which entry was picked, and
-whether the cells survive tells whether its resolution made it through. How to read the result is in `AGENTS.md`.
+the cells survive only if the entry was not scaled down on the way (any downscale
+averages a 1px checkerboard into a flat color). How to read the result is in `AGENTS.md`.
 
 Also standard library only, so it works where `iconutil` and `sips` do not — which
 is why the icons of the other macOS apps here are rebuilt with this one rather than
