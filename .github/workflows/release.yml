@@ -181,6 +181,17 @@ jobs:
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      # アイコンの検証用アプリ (配布物には入らない) が組み立てられることだけを見る。
+      # swiftc が要るので macOS でしか試せない (CYBERNEURA-DEV-897)。配布物と無関係な
+      # 道具の故障でリリースを止めないよう、PR でだけ走らせる。
+      - name: Build icon probe
+        if: runner.os == 'macOS' && github.event_name == 'pull_request'
+        run: |
+          sh resources/app-icons/probe/build.sh "$RUNNER_TEMP/icon-probe"
+          codesign --verify --strict "$RUNNER_TEMP/icon-probe/IconProbe-asc.app"
+          codesign --verify --strict "$RUNNER_TEMP/icon-probe/IconProbe-desc.app"
+          codesign --verify --strict "$RUNNER_TEMP/icon-probe/IconProbe-no16.app"
+
   # matrix の全ジョブが成果物を上げる先の draft Release を、ビルドの前に 1 つだけ用意する。
   #
   # tauri-action に tagName だけを渡すと、各ジョブがビルド後に「その tag の Release を
