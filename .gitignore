@@ -26,5 +26,3 @@ dist-ssr
 # アイコンの補助スクリプト (resources/app-icons/) を動かすと出る
 __pycache__/
 
-# アイコンの検証用アプリ (resources/app-icons/probe/build.sh) の出力先
-resources/app-icons/probe/build/

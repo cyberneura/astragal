@@ -239,50 +239,18 @@ icns を扱う道具はここに置くという約束で、各リポジトリに
 現在の `icon.icns` は `build_icns.py` で 1024px のマスターから作ったもので、
 16 / 32 / 64 / 128 / 256 / 512 / 1024px をすべて持ち、**大きい順に並んでいる**。
 
-**並び順が効く (CYBERNEURA-DEV-686)。** 1Password の SSH キー許可ダイアログで Astragal の
-アイコンだけがボケていた。資産は全サイズ揃っていたので、当初は呼び出し側の問題と判断したが、
-きれいに出る iTerm2 の icns は先頭が 256px、ボケる Astragal (`tauri icon` 製) と
-quickllm / clipboard-palette (当時の `build_icns.py` 製) は先頭が 16px だった。
-スクリーンショットのボケ方も 12〜16px の拡大と一致する。icns の最初の 1 枚だけを読んで
-拡大する実装があると考え、大きい順に並べ替えた (v0.4.2)。**これで直ったかは macOS 上で
-確かめる必要があり、Linux では検証できない。** 直らなければ別の原因。
+**並び順が効く。** 1Password の SSH キー許可ダイアログ (「Allow <アプリ> to use SSH key」) は
+**サイズを選ばず icns の先頭のエントリを表示サイズに拡縮して出す**。先頭が 16px (`tauri icon` / `iconutil` 製) だと
+ボケ、大きい順なら鮮明に出る。2026-10-02 に macOS 上で、大きい順の Astragal 0.8.2 は鮮明、
+小さい順の Queryfolio / quickllm はボケることを確かめた。
 
-- `pnpm tauri icon` は小さい順の icns を書くので、**icns はそれで作らない**
+- `pnpm tauri icon` / `iconutil` は小さい順の icns を書くので、**icns はそれで作らない**
   (手順は `README.md` の「アイコン」)
 - Finder / Dock / NSImage のようにサイズを選んで引く経路は並び順に依存しない
-
-**並び順の仮説は未確認のまま、ダイアログは 16px を出していると分かった (CYBERNEURA-DEV-897)。**
-2026-10-01 に Queryfolio (icns は小さい順、16px は描き分け済み) の同じダイアログの
-スクリーンショットをもらい、アイコンを各エントリの拡大と画素で比べたところ、`icp4` (16px)
-と平均誤差 7.7、`icp5` (32px) とは 28.1 で、**16px のエントリそのものの拡大**だった
-(帯 2 本の 16px 専用の絵がそのまま出ていた)。「Electron は 32px まで取れるので 32px が勝負」
-(DEV-825) はこのダイアログには当てはまらない。依頼者は大きい順の Astragal も
-「同様にボケる」と言っており、そうなら並び順も効いていない。
-
-残る説明は「並び順によらず 16px のエントリを選んでいる」。その場合、16px のエントリを
-抜けば次に小さいエントリが選ばれて鮮明になるのか、それとも 16x16 に縮めて渡されるだけで
-変わらないのかがまだ分からない。これを確かめる道具が `resources/app-icons/probe/` にある
-(macOS で実行する):
-
-```shell
-sh resources/app-icons/probe/build.sh   # build/ に IconProbe-asc / -desc / -no16 の .app
-open -n resources/app-icons/probe/build/IconProbe-asc.app --args <user@host>
-open -n resources/app-icons/probe/build/IconProbe-desc.app --args <user@host>
-open -n resources/app-icons/probe/build/IconProbe-no16.app --args <user@host>
-```
-
-`ssh -T <user@host>` を走らせるだけのアプリで、1Password の SSH キーを使う接続先を渡す
-(既定は `git@github.com`)。**ターミナルから中のバイナリを直接実行しないこと** — ダイアログに
-ターミナルのアイコンが出る。3 つは icns の並び順 (asc = 小さい順 / desc = 大きい順) と
-16px の有無 (no16 は desc から `icp4` を抜いたもの) だけが違い、エントリごとに色を変えた
-1px 角の市松模様を入れてある (色の対応は `make_probe_icns.py` の `ENTRIES`)。一度でも縮小されると市松は無地になる。
-
-| ダイアログの見え方 | 意味 |
-|---|---|
-| asc が赤、desc が灰 | 先頭のエントリを読んでいる。各アプリの icns を `build_icns.py` で作り直せば直る |
-| asc / desc とも赤 (16x16 マス) | 並び順によらず 16px のエントリを選んでいる。no16 を見る |
-| ↑ かつ no16 が橙か黄で、市松が 32x32 マス | 32px のエントリが届いている。16px を抜けば今より鮮明になる |
-| ↑ かつ no16 が無地 | 大きいエントリを 16x16 に縮めて渡している。バンドル側では 16px より細かくできない |
+- このダイアログは `screencapture` に写らない。確認はユーザーの目視に頼る
+- 検証用の .app を作って確かめる手は効かなかった。ad-hoc 署名だと 1Password は即座に拒否し、
+  Developer ID で署名しても (`NSApplication` を起こしても) ダイアログを出さずに保留したままに
+  なる。確認は配布している実アプリで行う
 
 ## 依存ライブラリの挙動を調べる時
 

@@ -5,7 +5,7 @@
     python3 resources/app-icons/build_icns.py <masters-dir> <out.icns>
 
 **なぜ自前で書くか**: macOS の `iconutil` / `sips` は macOS でしか動かず、
-Pillow も ImageMagick も入っていない環境がある。アイコンの解像度不足は
+Pillow も ImageMagick も入っていない環境がある。icns の不備は
 「1Password の権限ダイアログでアイコンがボケる」のような形で表に出るので
 (CYBERNEURA-DEV-686)、直す手段が特定の OS でしか使えないのは困る。
 縮小は 2 の冪の整数倍だけを扱うので、区画の平均がそのまま正しい答えになる
@@ -21,14 +21,8 @@ Pillow も ImageMagick も入っていない環境がある。アイコンの解
     icp4 16   ic11 32(=16@2x)   icp5 32   ic12 64(=32@2x)
     ic07 128  ic13 256(=128@2x) ic08 256  ic14 512(=256@2x)  ic09 512
 
-**エントリは大きいサイズから順に並べる** (`iconutil` とは逆順)。icns の中から
-「最初の 1 枚」だけを取る実装があると考え、その場合は先頭の 16px が拡大されて表示される。
-**この仮説は確認できていない** — 後に同じダイアログが 16px のエントリそのものを出していると
-分かり、単に 16x16 を要求しているだけでも説明がつく (CYBERNEURA-DEV-897。切り分けは
-`probe/build.sh`)。
-1Password の SSH キー許可ダイアログで Astragal のアイコンがボケていた件の対策で
-(CYBERNEURA-DEV-686)、きれいに出ていた iTerm2 の icns は先頭が 256px、ボケていた
-Astragal / quickllm / clipboard-palette は先頭が 16px だった。サイズを選んで引く
+**エントリは大きいサイズから順に並べる** (`iconutil` とは逆順)。1Password の SSH キー
+許可ダイアログはサイズを選ばず icns の先頭のエントリを表示サイズに拡縮して出すので、先頭が 16px だと拡大されてボケる。サイズを選んで引く
 macOS の通常の経路 (Finder / Dock / NSImage) は並び順に依存しないので、逆順にして
 失うものは無い。
 

@@ -334,29 +334,12 @@ master is that large):
 python3 resources/app-icons/build_icns.py <master.png> <out.icns>
 ```
 
-It writes the entries largest first, on the theory that some programs read only the
-first image of an `.icns` and scale it to fit (with `iconutil` or `tauri icon` output that
-first image is the 16px one). That theory came from the icon looking blurry in
-1Password's SSH key prompt, and it has not been confirmed: a later screenshot showed the
-prompt displaying exactly the 16px entry of an icon, which also fits 1Password picking
-the 16px entry whatever the order. Ordering largest first costs nothing either way, so
-`icon.icns` is still built with this script rather than `tauri icon`.
-
-To find out which entry a program actually uses, build the probe apps on macOS:
-
-```shell
-sh resources/app-icons/probe/build.sh
-open -n resources/app-icons/probe/build/IconProbe-asc.app --args <user@host>
-open -n resources/app-icons/probe/build/IconProbe-desc.app --args <user@host>
-open -n resources/app-icons/probe/build/IconProbe-no16.app --args <user@host>
-```
-
-Each runs `ssh -T <user@host>` and exits, so 1Password shows its prompt with the probe's
-icon. They differ only in entry order (smallest first / largest first) and, for `no16`, in
-leaving out the 16px entry; every entry is a checkerboard of 1px cells in its own color
-(see `ENTRIES` in `make_probe_icns.py`). The color tells which entry was picked, and
-the cells survive only if the entry was not scaled down on the way (any downscale
-averages a 1px checkerboard into a flat color). How to read the result is in `AGENTS.md`.
+It writes the entries largest first. 1Password's SSH key prompt does not pick an entry by
+size: it takes the first image of an `.icns` and scales it to the size it displays.
+`iconutil` and `tauri icon` put the 16px one first, so their output is scaled up and looks
+blurry there. Finder, the Dock and `NSImage` pick an entry by size, so the order
+does not matter to them. That is why `icon.icns` is built with this script rather than
+`tauri icon`.
 
 Also standard library only, so it works where `iconutil` and `sips` do not — which
 is why the icons of the other macOS apps here are rebuilt with this one rather than
