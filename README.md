@@ -334,9 +334,10 @@ master is that large):
 python3 resources/app-icons/build_icns.py <master.png> <out.icns>
 ```
 
-It writes the entries largest first. 1Password's SSH key prompt shows the first image of
-an `.icns` scaled up, and `iconutil` or `tauri icon` put the 16px one first, so their output
-looks blurry there. Finder, the Dock and `NSImage` pick an entry by size, so the order
+It writes the entries largest first. 1Password's SSH key prompt does not pick an entry by
+size: it takes the first image of an `.icns` and scales it to the size it displays.
+`iconutil` and `tauri icon` put the 16px one first, so their output is scaled up and looks
+blurry there. Finder, the Dock and `NSImage` pick an entry by size, so the order
 does not matter to them. That is why `icon.icns` is built with this script rather than
 `tauri icon`.
 
