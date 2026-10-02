@@ -42,7 +42,7 @@ HEADERLESS = {"is32", "il32", "ih32", "it32", "ic04", "ic05"}
 NON_IMAGE = {"s8mk", "l8mk", "h8mk", "t8mk", "TOC ", "icnV", "info", "name", "sbtp", "slct"}
 
 # macOS が実際に引くサイズ。ここに抜けがあるとその大きさで表示された時に
-# 拡大されてボケる (1Password の権限ダイアログの 16px がその例)。
+# 拡大されてボケる。
 REQUIRED = (16, 32, 64, 128, 256, 512)
 
 # あると良いが、無くても落とさないサイズ。Finder の最大表示と Dock の拡大が

@@ -5,7 +5,7 @@
     python3 resources/app-icons/build_icns.py <masters-dir> <out.icns>
 
 **なぜ自前で書くか**: macOS の `iconutil` / `sips` は macOS でしか動かず、
-Pillow も ImageMagick も入っていない環境がある。アイコンの解像度不足は
+Pillow も ImageMagick も入っていない環境がある。icns の不備は
 「1Password の権限ダイアログでアイコンがボケる」のような形で表に出るので
 (CYBERNEURA-DEV-686)、直す手段が特定の OS でしか使えないのは困る。
 縮小は 2 の冪の整数倍だけを扱うので、区画の平均がそのまま正しい答えになる
