@@ -111,11 +111,17 @@ Install 'astragal' Command in PATH で作る)。設計上の前提:
 - **Windows の single-instance は argv を `|` で連結・分割して送る** (plugin 2.4.3 の
   `platform_impl/windows.rs`)。パイプ入りの `-e` が割れるので、引数に `|` があれば
   `--exec-base64=` に包んで自分を起動し直してから送る (`forward_without_pipes`)。
-  包むのはコマンドだけなので、作業ディレクトリに `|` が残る時は送らずに止める
-  (起動し直した先でも `|` が見つかり、起動し直しが終わらなくなる)。
+  包むのはコマンドだけなので、作業ディレクトリに `|` が残る時は起動し直さずにそのまま
+  続ける (起動し直した先でも `|` が見つかり、起動し直しが終わらなくなる)。
   Windows で `-e` の後ろに複数の引数を取らないのは、cmd と PowerShell で引用の規則が違うため
 - `--minimized` / `--help` の判定も `cli::parse` を通す。argv 全体を探すと `-e` の
   コマンドの引数に反応する
+- **Windows のリリース版は GUI サブシステム** (`main.rs` の `windows_subsystem`) なので
+  stderr / stdout はどこにも出ない。利用者に見せる CLI の出力 (`--help`・引数の誤り) は
+  起動してからダイアログで出す (`report_cli_help` / `report_cli_error`)
+- 実機で試す時は、インストール済みの Astragal を終了しておく。single-instance のソケット
+  (`/tmp/com_cyberneura_astragal_si.sock`) は identifier だけで決まり、ビルド版の引数が
+  インストール版へ送られてしまう
 
 ## Ask AI (CYBERNEURA-DEV-898)
 
@@ -150,6 +156,9 @@ cd src-tauri && cargo test
 cd src-tauri && cargo clippy --all-targets
 pnpm exec tsc --noEmit
 ```
+
+Windows ターゲットの検査 (`--target x86_64-pc-windows-msvc`) は tauri-winres が `llvm-rc` を
+要求するので、無い mac では通らない。PR の CI (`release.yml` の test ジョブ、windows-latest) で見る。
 
 ## バージョンとリリース
 
