@@ -219,6 +219,13 @@ main を出している間だけ `Regular` に切り替えて Dock に出し、�
   (ホットキー・トレイメニュー・single-instance・Dock の Reopen が全部ここを通る) と setup の
   初回表示。隠す側は `toggle_visibility` / `hide_window` / `hide_on_close` / `hide_on_blur`。
   `win.hide()` を新しく書く時は忘れないこと (Dock にアイコンが残る)
+- **アプリメニューの Hide (Cmd+H) は自前の項目** (`app_menu`)。Regular の間はアプリメニューが
+  出るが、Tauri 既定の `PredefinedMenuItem::hide` は AppKit の `hide:` を直接呼ぶので、
+  `dock_follows` を通らず Dock にアイコンだけが残る。`app_menu` は既定メニューと同じ構成で
+  Hide だけを差し替え、`hide_all_windows` (全ウインドウを隠して `dock_follows`) を通す。
+  Dock アイコンの右クリックの「隠す」は AppKit が直接処理するので拾えていない
+  (Dock に残るだけで、クリックすれば Reopen で main が出る)。
+  **アプリメニューに項目を足す時は `app_menu` を直す** (既定メニューはもう使っていない)
 - 出す時は Regular に切り替えてから `show` / `set_focus` する
 - Dock アイコンのクリックは `RunEvent::Reopen` で受けて main を前に出す
   (`.build()` してから `.run(|app, event| ...)` にしているのはこのため)

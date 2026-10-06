@@ -572,6 +572,83 @@ fn dock_follows(win: &WebviewWindow, main_shown: bool) {
     let _ = main_shown;
 }
 
+/// アプリメニューの Hide 項目の id (`app_menu`)。
+#[cfg(target_os = "macos")]
+const APP_MENU_HIDE_ID: &str = "app_hide";
+
+/// Tauri の既定のアプリメニュー (`Menu::default`) と同じ構成で、Hide だけを自前の項目に
+/// 差し替えたもの (macOS のみ)。
+///
+/// 既定の Hide (`PredefinedMenuItem::hide`) は AppKit の `hide:` を直接呼ぶので、
+/// `dock_follows` を通らずに main が消え、Dock にアイコンだけが残る。自前の項目にして
+/// `dock_follows` を通す。Accessory の間もメニューは描画されないだけで Cmd+H は効くので、
+/// どちらの状態でも同じ経路になる (`hide_all_windows`)。
+/// Dock アイコンの右クリックメニューの「隠す」は AppKit が直接処理するため、ここでは
+/// 拾えない (Dock アイコンが残るだけで、クリックすれば Reopen で main が出る)。
+#[cfg(target_os = "macos")]
+fn app_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{AboutMetadata, PredefinedMenuItem, SubmenuBuilder};
+
+    let pkg_info = app.package_info();
+    let about = AboutMetadata {
+        name: Some(pkg_info.name.clone()),
+        version: Some(pkg_info.version.to_string()),
+        copyright: app.config().bundle.copyright.clone(),
+        authors: app.config().bundle.publisher.clone().map(|p| vec![p]),
+        ..Default::default()
+    };
+    let hide = MenuItemBuilder::with_id(APP_MENU_HIDE_ID, format!("Hide {}", pkg_info.name))
+        .accelerator("Cmd+H")
+        .build(app)?;
+    let app_submenu = SubmenuBuilder::new(app, pkg_info.name.clone())
+        .item(&PredefinedMenuItem::about(app, None, Some(about))?)
+        .separator()
+        .item(&PredefinedMenuItem::services(app, None)?)
+        .separator()
+        .item(&hide)
+        .item(&PredefinedMenuItem::hide_others(app, None)?)
+        .separator()
+        .item(&PredefinedMenuItem::quit(app, None)?)
+        .build()?;
+    let file = SubmenuBuilder::new(app, "File")
+        .item(&PredefinedMenuItem::close_window(app, None)?)
+        .build()?;
+    let edit = SubmenuBuilder::new(app, "Edit")
+        .item(&PredefinedMenuItem::undo(app, None)?)
+        .item(&PredefinedMenuItem::redo(app, None)?)
+        .separator()
+        .item(&PredefinedMenuItem::cut(app, None)?)
+        .item(&PredefinedMenuItem::copy(app, None)?)
+        .item(&PredefinedMenuItem::paste(app, None)?)
+        .item(&PredefinedMenuItem::select_all(app, None)?)
+        .build()?;
+    let view = SubmenuBuilder::new(app, "View")
+        .item(&PredefinedMenuItem::fullscreen(app, None)?)
+        .build()?;
+    let window = SubmenuBuilder::with_id(app, tauri::menu::WINDOW_SUBMENU_ID, "Window")
+        .item(&PredefinedMenuItem::minimize(app, None)?)
+        .item(&PredefinedMenuItem::maximize(app, None)?)
+        .separator()
+        .item(&PredefinedMenuItem::close_window(app, None)?)
+        .build()?;
+    let help = SubmenuBuilder::with_id(app, tauri::menu::HELP_SUBMENU_ID, "Help").build()?;
+    MenuBuilder::new(app)
+        .items(&[&app_submenu, &file, &edit, &view, &window, &help])
+        .build()
+}
+
+/// アプリメニューの Hide (`app_menu`)。AppKit の `hide:` と同じく全ウインドウを隠す。
+/// About / Third-Party Licenses は隠しても破棄されないので、開き直せば
+/// `present_auxiliary_window` で前に出る。
+#[cfg(target_os = "macos")]
+fn hide_all_windows(app: &AppHandle) {
+    for win in app.webview_windows().values() {
+        if win.hide().is_ok() {
+            dock_follows(win, false);
+        }
+    }
+}
+
 /// カーソルが載っているディスプレイの中央へ移す。既にそのディスプレイに居る時は
 /// 動かさない。手で置いた位置を毎回中央へ戻されると使いにくいため。
 fn move_to_cursor_monitor(win: &WebviewWindow) -> Result<(), String> {
@@ -1582,7 +1659,15 @@ pub fn run() {
         eprintln!("astragal: {warning}");
     }
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // 既定のアプリメニューの Hide (Cmd+H) を自前の項目に差し替える (`app_menu`)
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(app_menu).on_menu_event(|app, event| {
+        if event.id.as_ref() == APP_MENU_HIDE_ID {
+            hide_all_windows(app);
+        }
+    });
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
