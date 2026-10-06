@@ -28,6 +28,8 @@ A lightweight terminal app for macOS and Windows (Tauri 2.x + xterm.js).
 - Ask AI (optional, off by default): press Cmd+I, describe what you want to do, and a
   shell command is typed into the prompt for you to check and run yourself. See
   [Ask AI](#ask-ai)
+- Run a command in a new tab from the command line: `astragal -e 'free -m | grep Mem'`.
+  See [Command line](#command-line)
 - Configuration through `~/.config/astragal/config.yaml`
 
 ## Install
@@ -58,6 +60,31 @@ winget install Cyberneura.Astragal
 Each release is submitted to [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs)
 automatically, but a version only becomes installable after Microsoft's moderators
 merge it, which takes days. See [docs/winget.md](docs/winget.md).
+
+### Command line
+
+On macOS, choose **Install 'astragal' Command in PATH** from the menu bar icon's
+right-click menu. It creates `/usr/local/bin/astragal`, a symbolic link to the app's
+binary, and asks for an administrator password when `/usr/local/bin` is not writable.
+On Windows, call `astragal.exe` from the install folder.
+
+```shell
+astragal                                # bring Astragal to the front
+astragal -e 'free -m | grep Mem'        # run a command in a new tab
+astragal -e ls -la "my dir"             # every argument after -e belongs to the command
+astragal --working-directory ~/src      # open a new tab in ~/src
+```
+
+- `-e` / `--exec` runs the command with your shell (`shell.command` and `shell.args`
+  plus `-c`; `/C` for cmd, `-Command` for PowerShell, and `-e sh -c` for `wsl.exe`),
+  in a new tab of the main window. A single argument goes to the shell as is, so it
+  can hold pipes; several arguments are quoted one by one and joined. On Windows, pass
+  the command as one argument (`-e "dir | findstr foo"`), since cmd and PowerShell
+  quote differently
+- The tab starts in the current directory, or in `--working-directory`
+- `astragal` returns right away and does not wait for the command. When the command
+  exits, the tab stays open with its output unless you typed into it (the same rule as
+  `terminal.close_on_exit`)
 
 ### Windows differences
 

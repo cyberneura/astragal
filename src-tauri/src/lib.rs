@@ -1,4 +1,5 @@
 mod ai;
+mod cli;
 mod config;
 
 use base64::Engine;
@@ -40,6 +41,10 @@ struct AppState {
     suppress_blur_record: AtomicBool,
     /// 最後に送ったツノの位置。フロントの購読が間に合わなかった時に送り直す。
     last_anchor: Mutex<Option<PopoverAnchor>>,
+    /// コマンドライン (`-e` 等) から届き、まだタブになっていない要求。
+    /// main の front が `create_terminal` に id を渡して取り出す
+    launch_requests: Mutex<Vec<cli::LaunchRequest>>,
+    next_launch_id: Mutex<u32>,
 }
 
 /// トレイアイコンの中心 x と上端・下端 y (グローバル論理ポイント)
@@ -86,12 +91,15 @@ const BLUR_HIDE_GUARD: Duration = Duration::from_millis(250);
 const CURSOR_DRIFT_TOLERANCE: f64 = 8.0;
 /// main / small を表示した時に、そのウインドウへ送るイベント
 const WINDOW_SHOWN_EVENT: &str = "window-shown";
-/// ログイン時の自動起動で付ける引数。付いていたら main を出さずメニューバーだけに常駐する
-const MINIMIZED_ARG: &str = "--minimized";
+/// コマンドラインからタブを開く要求が届いた時に main へ送るイベント
+const LAUNCH_REQUESTED_EVENT: &str = "launch-requested";
+use cli::MINIMIZED_ARG;
 
-/// メニューバーだけに常駐した状態で起動するか (ログイン時の自動起動)
+/// メニューバーだけに常駐した状態で起動するか (ログイン時の自動起動)。
+/// `-e` より後ろの `--minimized` はコマンドの引数なので数えない。タブを開く要求が
+/// 一緒なら、そのタブを見せるために main を出す
 fn launched_minimized<I: IntoIterator<Item = S>, S: AsRef<str>>(args: I) -> bool {
-    args.into_iter().any(|arg| arg.as_ref() == MINIMIZED_ARG)
+    cli::parse(args).is_ok_and(|parsed| parsed.minimized && !parsed.opens_tab())
 }
 
 // ── Commands ─────────────────────────────────────────────────────────────────
@@ -189,10 +197,17 @@ fn shell_label(shell: &std::path::Path) -> String {
         .unwrap_or_else(|| "shell".to_string())
 }
 
-fn shell_command(shell: &config::ShellConfig) -> CommandBuilder {
-    let mut cmd = CommandBuilder::new(shell.resolve_command());
+fn shell_command(shell: &config::ShellConfig, launch: Option<&cli::LaunchRequest>) -> CommandBuilder {
+    let program = shell.resolve_command();
+    let mut cmd = CommandBuilder::new(&program);
     for arg in &shell.args {
         cmd.arg(arg);
+    }
+    if let Some(command) = launch.and_then(|launch| launch.exec.as_deref()) {
+        for arg in cli::shell_exec_args(&program) {
+            cmd.arg(arg);
+        }
+        cmd.arg(command);
     }
     cmd.env("TERM", "xterm-256color");
     // Finder / open から起動したアプリは LANG を持たない。未設定のままだと
@@ -204,15 +219,70 @@ fn shell_command(shell: &config::ShellConfig) -> CommandBuilder {
         cmd.env(key, value);
     }
     // GUI 起動時の cwd は / なので、ターミナルの開始位置としては使えない。
-    if let Some(home) = dirs::home_dir() {
-        cmd.cwd(home);
+    if let Some(dir) = launch
+        .and_then(|launch| launch.cwd.clone())
+        .or_else(dirs::home_dir)
+    {
+        cmd.cwd(dir);
     }
     cmd
 }
 
+/// タブを開く要求を積む。main の front が起動前なら、起動時に `pending_launches` で拾う
+fn queue_launch(app: &AppHandle, args: &cli::CliArgs, caller_cwd: Option<&std::path::Path>) -> Option<LaunchInfo> {
+    let state = app.state::<AppState>();
+    let mut next_id = state.next_launch_id.lock().ok()?;
+    let request = cli::launch_request(*next_id, args, caller_cwd)?;
+    *next_id += 1;
+    let info = LaunchInfo::from(&request);
+    state.launch_requests.lock().ok()?.push(request);
+    Some(info)
+}
+
+/// front に渡すタブを開く要求。コマンド本体はラベルとしてだけ渡す
+#[derive(Clone, Serialize)]
+struct LaunchInfo {
+    id: u32,
+    label: Option<String>,
+}
+
+impl From<&cli::LaunchRequest> for LaunchInfo {
+    fn from(request: &cli::LaunchRequest) -> Self {
+        Self {
+            id: request.id,
+            label: request.exec.clone(),
+        }
+    }
+}
+
+/// まだタブになっていない要求。main 以外には渡さない (CLI のタブは main に開く)
 #[tauri::command]
-fn create_terminal(app: AppHandle, window: WebviewWindow) -> Result<u32, String> {
+fn pending_launches(app: AppHandle, window: WebviewWindow) -> Vec<LaunchInfo> {
+    if window.label() != "main" {
+        return Vec::new();
+    }
+    let state = app.state::<AppState>();
+    let requests = match state.launch_requests.lock() {
+        Ok(requests) => requests,
+        Err(_) => return Vec::new(),
+    };
+    requests.iter().map(LaunchInfo::from).collect()
+}
+
+#[tauri::command]
+fn create_terminal(app: AppHandle, window: WebviewWindow, launch: Option<u32>) -> Result<u32, String> {
     let app_state = app.state::<AppState>();
+    let launch = match launch {
+        Some(id) => {
+            let mut requests = app_state.launch_requests.lock().map_err(|e| e.to_string())?;
+            let index = requests
+                .iter()
+                .position(|request| request.id == id)
+                .ok_or_else(|| format!("No launch request {id}"))?;
+            Some(requests.remove(index))
+        }
+        None => None,
+    };
     let mut sessions = app_state.sessions.lock().map_err(|e| e.to_string())?;
     let mut next_id = app_state.next_tab_id.lock().map_err(|e| e.to_string())?;
 
@@ -230,7 +300,7 @@ fn create_terminal(app: AppHandle, window: WebviewWindow) -> Result<u32, String>
         })
         .map_err(|e| format!("Failed to open pty: {}", e))?;
 
-    let cmd = shell_command(&app_state.config.config.shell);
+    let cmd = shell_command(&app_state.config.config.shell, launch.as_ref());
     let child = pair
         .slave
         .spawn_command(cmd)
@@ -960,13 +1030,19 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let autostart = CheckMenuItemBuilder::with_id("autostart", "Launch at Login")
         .checked(autostart_enabled(app))
         .build(app)?;
+    #[cfg(target_os = "macos")]
+    let install_cli =
+        MenuItemBuilder::with_id("install_cli", "Install 'astragal' Command in PATH").build(app)?;
     let close = MenuItemBuilder::with_id("close", "Close").build(app)?;
 
     let menu = MenuBuilder::new(app)
         .item(&show_small)
         .item(&toggle)
         .item(&separator)
-        .item(&autostart)
+        .item(&autostart);
+    #[cfg(target_os = "macos")]
+    let menu = menu.item(&install_cli);
+    let menu = menu
         // 同じ PredefinedMenuItem を 2 回入れると、macOS では 1 つの NSMenuItem を 2 か所に
         // 置くことになり壊れる。2 本目は別のインスタンスにする
         .separator()
@@ -1000,6 +1076,8 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             "autostart" => toggle_autostart(app, &autostart),
+            #[cfg(target_os = "macos")]
+            "install_cli" => install_cli_command(app),
             "close" => {
                 app.exit(0);
             }
@@ -1125,6 +1203,38 @@ fn toggle_autostart(app: &AppHandle, item: &CheckMenuItem<tauri::Wry>) {
             .show(|_| {});
     }
     let _ = item.set_checked(autostart_enabled(app));
+}
+
+/// `/usr/local/bin/astragal` を作り、結果をダイアログで知らせる (トレイからの操作なので
+/// `warn()` では届かない)。管理者権限の確認が出るので、メニューのスレッドを塞がない
+#[cfg(target_os = "macos")]
+fn install_cli_command(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let (message, kind) = match cli::install_command() {
+            Ok(None) => return,
+            Ok(Some(target)) => (
+                format!(
+                    "Installed {} -> {}\n\nRun a command in a new tab with:\n  astragal -e 'command'",
+                    cli::INSTALL_PATH,
+                    target.display()
+                ),
+                MessageDialogKind::Info,
+            ),
+            Err(e) => {
+                eprintln!("astragal: failed to install the command: {e}");
+                (
+                    format!("Failed to install {}:\n{e}", cli::INSTALL_PATH),
+                    MessageDialogKind::Error,
+                )
+            }
+        };
+        app.dialog()
+            .message(message)
+            .title("Install 'astragal' Command")
+            .kind(kind)
+            .show(|_| {});
+    });
 }
 
 /// 論理ポイントのアンカーが、このモニタの矩形に入るか。
@@ -1307,6 +1417,34 @@ fn warn(app: &AppHandle, message: String) {
     }
 }
 
+/// 本体に届いた引数の誤り。macOS はターミナル側 (`relaunch_from_terminal`) で弾いて
+/// 表示済み。Windows のリリース版は GUI サブシステムで stderr がどこにも出ないので、
+/// ダイアログで知らせる (タブが開かない理由が分からなくなる)
+fn report_cli_error(app: &AppHandle, error: &str) {
+    eprintln!("astragal: {error}");
+    #[cfg(windows)]
+    app.dialog()
+        .message(format!("{error}\n\n{}", cli::USAGE))
+        .title("Astragal")
+        .kind(MessageDialogKind::Error)
+        .show(|_| {});
+    #[cfg(not(windows))]
+    let _ = app;
+}
+
+/// `--help` を本体で受けた時 (Windows と、起動済みの本体へ送られた時)。macOS は
+/// ターミナル側 (`relaunch_from_terminal`) で表示済みなので何もしない
+fn report_cli_help(app: &AppHandle) {
+    #[cfg(windows)]
+    app.dialog()
+        .message(cli::USAGE)
+        .title("Astragal")
+        .kind(MessageDialogKind::Info)
+        .show(|_| {});
+    #[cfg(not(windows))]
+    let _ = app;
+}
+
 /// 赤ボタンでウインドウを閉じずに隠す。閉じると webview ごと破棄されるので、
 /// トレイから開き直しても復元できず、ターミナルのセッションも失われる。
 fn hide_on_close(win: &WebviewWindow) {
@@ -1344,6 +1482,22 @@ fn hide_on_blur<F: Fn() + Send + 'static>(win: &WebviewWindow, on_hide: F) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "macos")]
+    if let Some(code) = cli::relaunch_from_terminal() {
+        std::process::exit(code);
+    }
+    #[cfg(windows)]
+    if let Some(code) = cli::forward_without_pipes() {
+        std::process::exit(code);
+    }
+    // Windows のリリース版は GUI サブシステムで、ここで print しても見えない。
+    // 起動してからダイアログで出す (`report_cli_help`)
+    #[cfg(not(windows))]
+    if cli::parse(std::env::args()).is_ok_and(|parsed| parsed.help) {
+        print!("{}", cli::USAGE);
+        return;
+    }
+
     // ウインドウを出す前に設定を確定させる (config_override_command の実行を
     // 含むため、ここで数秒かかることがある)。
     let loaded_config = config::load();
@@ -1356,12 +1510,28 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            // 起動済みのところへ自動起動が重なった時は、ウインドウを出さない
-            if launched_minimized(&args) {
-                return;
-            }
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            let launch = match cli::parse(&args) {
+                Ok(parsed) => {
+                    // 起動済みのところへ自動起動が重なった時は、ウインドウを出さない
+                    if launched_minimized(&args) {
+                        return;
+                    }
+                    if parsed.help {
+                        report_cli_help(app);
+                    }
+                    queue_launch(app, &parsed, Some(std::path::Path::new(&cwd)))
+                }
+                Err(e) => {
+                    report_cli_error(app, &e);
+                    None
+                }
+            };
             if let Some(win) = app.get_webview_window("main") {
+                // 表示の合図 (refillIfEmpty) より先に届くよう、present の前に送る
+                if let Some(info) = launch {
+                    let _ = win.emit_to("main", LAUNCH_REQUESTED_EVENT, info);
+                }
                 let _ = move_to_cursor_monitor(&win);
                 let _ = present_window(&win);
             }
@@ -1375,6 +1545,8 @@ pub fn run() {
             blur_hidden_at: Mutex::new(None),
             suppress_blur_record: AtomicBool::new(false),
             last_anchor: Mutex::new(None),
+            launch_requests: Mutex::new(Vec::new()),
+            next_launch_id: Mutex::new(0),
         })
         .setup(move |app| {
             // Dock に出さない。メニューバー常駐が主で、Dock アイコンから起動する
@@ -1382,6 +1554,17 @@ pub fn run() {
             // dev 実行では素のバイナリが動くので実行時にも設定する。
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            match cli::parse(std::env::args()) {
+                Ok(parsed) => {
+                    if parsed.help {
+                        report_cli_help(app.handle());
+                    }
+                    let cwd = std::env::current_dir().ok();
+                    queue_launch(app.handle(), &parsed, cwd.as_deref());
+                }
+                Err(e) => report_cli_error(app.handle(), &e),
+            }
 
             let cfg = &loaded_config.config;
             setup_tray(app.handle())?;
@@ -1441,6 +1624,7 @@ pub fn run() {
             licenses_window_ready,
             request_small_anchor,
             create_terminal,
+            pending_launches,
             write_stdin,
             resize_terminal,
             close_terminal,
@@ -2004,6 +2188,8 @@ mod tests {
         ]));
         assert!(!launched_minimized(["astragal"]));
         assert!(!launched_minimized(["astragal", "--minimize"]));
+        assert!(!launched_minimized(["astragal", "-e", "--minimized"]));
+        assert!(!launched_minimized(["astragal", "--minimized", "-e", "top"]));
     }
 
     #[test]

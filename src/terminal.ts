@@ -188,9 +188,14 @@ async function registerPtyEvents(): Promise<void> {
   });
 }
 
+/**
+ * @param launch コマンドライン (`astragal -e`) から届いた要求の id。Rust 側が持っている
+ *   コマンドと開始位置でシェルを起動する
+ */
 export async function startSession(
   element: HTMLElement,
   config: AppConfig,
+  launch?: number,
 ): Promise<Session> {
   await setupPtyEvents();
 
@@ -224,7 +229,7 @@ export async function startSession(
 
   terminal.open(element);
 
-  const id = await invoke<number>("create_terminal");
+  const id = await invoke<number>("create_terminal", { launch: launch ?? null });
   const session: Session = {
     id,
     terminal,

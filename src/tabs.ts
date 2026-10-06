@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   closeSession,
@@ -28,6 +29,16 @@ interface TerminalTab {
   button: HTMLButtonElement;
 }
 
+/** コマンドラインから届いたタブを開く要求 (lib.rs の LaunchInfo) */
+interface LaunchInfo {
+  id: number;
+  /** `-e` のコマンド。無ければシェルの名前でタブを名付ける */
+  label: string | null;
+}
+
+/** タブ名に出すコマンドの最大文字数。全文はツールチップに出す */
+const LAUNCH_LABEL_MAX = 24;
+
 export interface TabElements {
   tabContainer: HTMLElement;
   terminalsContainer: HTMLElement;
@@ -51,6 +62,11 @@ let mruOrder: number[] = [];
 let cycle: { order: number[]; index: number } | null = null;
 /** 起動中 (startSession 待ち) の createTab の数。表示時の補充が二重に走らないように見る */
 let pendingCreates = 0;
+/**
+ * タブにした (しかけた) 要求の id。起動時の pending_launches とイベントの両方で
+ * 同じ要求が届くことがあるので、1 回だけ開く
+ */
+const handledLaunches = new Set<number>();
 let elements: TabElements;
 let appConfig: AppConfig;
 
@@ -76,16 +92,16 @@ function createTabButton(tabId: number, label: string): HTMLButtonElement {
   return button;
 }
 
-export async function createTab(): Promise<void> {
+export async function createTab(launch?: LaunchInfo): Promise<void> {
   pendingCreates++;
   try {
-    await openTab();
+    await openTab(launch);
   } finally {
     pendingCreates--;
   }
 }
 
-async function openTab(): Promise<void> {
+async function openTab(launch?: LaunchInfo): Promise<void> {
   clearEmptyNotice();
   // 表示時の補充で作り直す時、前回の起動失敗の表示は古くなっている。成功してから
   // 消すと、並行して失敗した別の試行の表示まで消すので、試す前に消す。
@@ -99,7 +115,7 @@ async function openTab(): Promise<void> {
 
   let session: Session;
   try {
-    session = await startSession(element, appConfig);
+    session = await startSession(element, appConfig, launch?.id);
   } catch (e) {
     console.error("Failed to create terminal:", e);
     element.remove();
@@ -107,7 +123,10 @@ async function openTab(): Promise<void> {
     return;
   }
 
-  const button = createTabButton(session.id, `${appConfig.shell_name} ${nextTabNumber++}`);
+  const button = createTabButton(session.id, tabLabel(launch));
+  if (launch?.label) {
+    button.title = launch.label;
+  }
   tabs.push({ session, element, button });
   // startSession を待っている間に、残っていたタブが自動で閉じて通知が出ることがある。
   // タブが載る以上、その通知は消す。
@@ -123,6 +142,25 @@ async function openTab(): Promise<void> {
     }
   });
   switchToTab(session.id);
+}
+
+function tabLabel(launch?: LaunchInfo): string {
+  const command = launch?.label;
+  if (!command) {
+    return `${appConfig.shell_name} ${nextTabNumber++}`;
+  }
+  return command.length > LAUNCH_LABEL_MAX
+    ? `${command.slice(0, LAUNCH_LABEL_MAX - 1)}…`
+    : command;
+}
+
+/** コマンドラインからの要求をタブにする。同じ要求は 1 回だけ開く */
+function openLaunch(launch: LaunchInfo): Promise<void> | undefined {
+  if (handledLaunches.has(launch.id)) {
+    return undefined;
+  }
+  handledLaunches.add(launch.id);
+  return createTab(launch);
 }
 
 /** 最後のタブが自動で閉じた時に、空のウインドウへ出しておく説明 */
@@ -623,9 +661,28 @@ export async function initTabs(ui: TabElements, config: AppConfig): Promise<void
     }
   });
 
+  // 起動済みのところへ届いた要求。表示の合図 (window-shown) より先に送られてくるので、
+  // ここで同期的に createTab して pendingCreates を立てれば、空のタブは補充されない
+  try {
+    await getCurrentWebviewWindow().listen<LaunchInfo>("launch-requested", ({ payload }) => {
+      openLaunch(payload);
+    });
+  } catch (e) {
+    console.error("Failed to subscribe to the launch-requested event:", e);
+  }
+  // 起動時の引数や、購読より前に届いた要求。あればそれを最初のタブにする
+  const launches = await invoke<LaunchInfo[]>("pending_launches").catch((e) => {
+    console.error("Failed to read pending launches:", e);
+    return [] as LaunchInfo[];
+  });
+
   // 最初のタブを先に作り始める。作成中は pendingCreates が立つので、購読の直後に
   // 表示の合図が来ても二重には作らない。
-  const firstTab = createTab();
+  const opening = launches.map(openLaunch).filter((p) => p !== undefined);
+  const firstTab =
+    opening.length > 0 || tabs.length > 0 || pendingCreates > 0
+      ? Promise.all(opening)
+      : createTab();
 
   // 表示の合図は Rust が main / small を出すたびに送る (起動時の最初の表示は
   // この購読より前なので届かないが、上の createTab が同じ役を果たす)。
