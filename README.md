@@ -22,6 +22,9 @@ A lightweight terminal app for macOS and Windows (Tauri 2.x + xterm.js).
   as vim or less is showing; the scrollback is still there once you leave it
 - Cmd+click a URL to open it in the default browser. Holding Cmd underlines the URL
   under the pointer, and a URL that soft-wraps across lines opens in full
+- Click the menu bar icon to show or hide the popover; right-click it for the menu
+- On macOS, the app icon appears in the Dock only while the main window is shown. Clicking
+  it brings the main window to the front
 - Launch at Login in the menu bar icon's right-click menu starts Astragal when you log in,
   with only the menu bar icon (no main window). Open the main window from the same menu or
   with the hotkey

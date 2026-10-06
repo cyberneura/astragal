@@ -205,12 +205,41 @@ GitHub Release を公開するので、**PR に version bump を含めるとマ�
 (`tray_anchor`)。この推定には潰しきれない重なりがあり、`cursor_is_stable` の doc に
 限界を書いてある。
 
-### Dock に出さない
+### Dock には main の表示中だけ出す (CYBERNEURA-DEV-954)
 
-`ActivationPolicy::Accessory` と `src-tauri/Info.plist` の `LSUIElement` の両方を使う。
-前者は dev 実行 (バンドルされない素のバイナリ)、後者はバンドル版の起動直後の
-ちらつき防止。**アプリメニューは描画されなくなるが Cmd+C / Cmd+V は効く**
+起動時は `ActivationPolicy::Accessory` と `src-tauri/Info.plist` の `LSUIElement` の両方で
+Dock に出さない。前者は dev 実行 (バンドルされない素のバイナリ)、後者はバンドル版の起動直後の
+ちらつき防止。**Accessory の間はアプリメニューが描画されないが Cmd+C / Cmd+V は効く**
 (`NSApp` の main menu オブジェクトは残り `performKeyEquivalent:` が辿るため)。
+
+main を出している間だけ `Regular` に切り替えて Dock に出し、隠したら `Accessory` に戻す
+(`dock_follows`)。吹き出しや About だけを開いても Dock には出さない。
+
+- **main を出し入れする経路は全部 `dock_follows` を通す。** 出す側は `present_window`
+  (ホットキー・トレイメニュー・single-instance・Dock の Reopen が全部ここを通る) と setup の
+  初回表示。隠す側は `toggle_visibility` / `hide_window` / `hide_on_close` / `hide_on_blur`。
+  `win.hide()` を新しく書く時は忘れないこと (Dock にアイコンが残る)
+- **アプリメニューの Hide (Cmd+H) は自前の項目** (`app_menu`)。Regular の間はアプリメニューが
+  出るが、Tauri 既定の `PredefinedMenuItem::hide` は AppKit の `hide:` を直接呼ぶので、
+  `dock_follows` を通らず Dock にアイコンだけが残る。`app_menu` は既定メニューと同じ構成で
+  Hide だけを差し替え、`hide_all_windows` (全ウインドウを隠して `dock_follows`) を通す。
+  Dock アイコンの右クリックの「隠す」は AppKit が直接処理するので拾えていない
+  (Dock に残るだけで、クリックすれば Reopen で main が出る)。
+  **アプリメニューに項目を足す時は `app_menu` を直す** (既定メニューはもう使っていない)
+- 出す時は Regular に切り替えてから `show` / `set_focus` する
+- Dock アイコンのクリックは `RunEvent::Reopen` で受けて main を前に出す
+  (`.build()` してから `.run(|app, event| ...)` にしているのはこのため)
+
+### トレイのメニューは右クリックの時だけ付ける (macOS、CYBERNEURA-DEV-954)
+
+macOS では `TrayIconBuilder::menu()` を使わない。NSStatusItem に menu が付いていると
+AppKit がクリックでそれを開く。tray-icon 0.24 はボタンに重ねたサブビュー (`TaoTrayTarget`)
+でクリックを横取りして `show_menu_on_left_click(false)` を実現しているが、実機では左クリックでも
+メニューが出た。横取りがどこで外れるのかは確かめられていない (OS 側の処理順、サブビューの frame が
+作成時に一度合わせるだけであること、等が候補)。menu を付けなければ AppKit が開く経路が無くなる。
+右クリック (Down) の時だけ `set_menu` → `show_menu` (`performClick:`、閉じるまで戻らない) →
+`set_menu(None)` で開く (`popup_tray_menu`)。Windows は従来どおり `menu()` +
+`show_menu_on_left_click(false)` (OS のトレイが右クリックで開く)。
 
 ### ログイン時の自動起動
 
