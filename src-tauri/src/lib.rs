@@ -523,7 +523,9 @@ fn toggle_window(app: AppHandle) -> Result<(), String> {
 /// フォーカスも見ないと、ホットキーで前面に出すつもりが隠れてしまう。
 fn toggle_visibility(win: &WebviewWindow) -> Result<(), String> {
     if win.is_visible().unwrap_or(false) && win.is_focused().unwrap_or(false) {
-        return win.hide().map_err(|e| e.to_string());
+        win.hide().map_err(|e| e.to_string())?;
+        dock_follows(win, false);
+        return Ok(());
     }
     let _ = move_to_cursor_monitor(win);
     present_window(win)
@@ -536,10 +538,38 @@ fn toggle_visibility(win: &WebviewWindow) -> Result<(), String> {
 /// webview を破棄しないので、front 側からは「隠れていたのが出た」ことを
 /// 確実には知れない。表示する側から送る。
 fn present_window(win: &WebviewWindow) -> Result<(), String> {
+    // Regular へ切り替えてから前に出す。逆順だと Accessory のまま set_focus した
+    // ウインドウが、切り替えの拍子に前面から外れることがある
+    dock_follows(win, true);
     win.show().map_err(|e| e.to_string())?;
     win.set_focus().map_err(|e| e.to_string())?;
     let _ = win.emit_to(win.label(), WINDOW_SHOWN_EVENT, ());
     Ok(())
+}
+
+/// main の表示・非表示に Dock アイコンを合わせる (macOS のみ)。
+///
+/// main を出している間だけ `Regular` にして Dock に出し、隠したら `Accessory` に戻す。
+/// 吹き出し (small) や About 等は対象外で、それだけを開いても Dock には出さない。
+/// main を出し入れする経路は全部ここを通すこと (`present_window` / `toggle_visibility` /
+/// `hide_window` / `hide_on_close` / `hide_on_blur`)。漏れると Dock に残ったままになる。
+fn dock_follows(win: &WebviewWindow, main_shown: bool) {
+    if win.label() != "main" {
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let policy = if main_shown {
+            tauri::ActivationPolicy::Regular
+        } else {
+            tauri::ActivationPolicy::Accessory
+        };
+        if let Err(e) = win.app_handle().set_activation_policy(policy) {
+            eprintln!("astragal: failed to change the activation policy: {e}");
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = main_shown;
 }
 
 /// カーソルが載っているディスプレイの中央へ移す。既にそのディスプレイに居る時は
@@ -876,6 +906,7 @@ fn fallback_tray_anchor(app: &AppHandle, logical_width: f64) -> TrayAnchor {
 fn hide_window(app: AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("main") {
         win.hide().map_err(|e| e.to_string())?;
+        dock_follows(&win, false);
     }
     if let Some(win) = app.get_webview_window("small") {
         win.hide().map_err(|e| e.to_string())?;
@@ -1051,13 +1082,25 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .item(&close)
         .build()?;
 
-    let _tray = TrayIconBuilder::new()
+    let tray = TrayIconBuilder::new()
         .icon(tray_icon()?)
         // macOS 以外では無視される
-        .icon_as_template(true)
-        .menu(&menu)
-        // 左クリックは吹き出しを出す。メニューは右クリックに寄せる
-        .show_menu_on_left_click(false)
+        .icon_as_template(true);
+    // 左クリックは吹き出しを出す。メニューは右クリックに寄せる。
+    //
+    // macOS では status item に menu を付けたままにしない。NSStatusItem に menu が
+    // 付いていると AppKit がクリックでそれを開く。tray-icon 0.24 はボタンに重ねた
+    // サブビュー (TaoTrayTarget) でクリックを横取りして `show_menu_on_left_click(false)`
+    // を実現しているが、実機では左クリックでもメニューが出ていた (CYBERNEURA-DEV-954)。
+    // 横取りがどこで外れるのかは確かめられていない (OS 側の処理順、サブビューの frame が
+    // 作成時に一度合わせるだけであること、等が候補)。menu を付けなければ AppKit が自分で
+    // 開く経路そのものが無くなるので、右クリックの時だけ付けて開き、閉じたら外す
+    // (`popup_tray_menu`)。
+    #[cfg(not(target_os = "macos"))]
+    let tray = tray.menu(&menu).show_menu_on_left_click(false);
+    #[cfg(target_os = "macos")]
+    let context_menu = menu.clone();
+    let _tray = tray
         .on_menu_event(move |app, event| match event.id.as_ref() {
             "show_small" => {
                 let _ = show_small_window(app.clone());
@@ -1083,7 +1126,7 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             }
             _ => {}
         })
-        .on_tray_icon_event(|tray, event| {
+        .on_tray_icon_event(move |tray, event| {
             let app = tray.app_handle();
             // クリック以外 (hover 等) でも位置が届くので、来るたびに覚えておく。
             // メニュー経由で開いた時にもツノの位置合わせに使う。
@@ -1094,18 +1137,48 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                     *anchor = Some(next);
                 }
             }
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                let _ = toggle_small_window(app.clone(), true);
+            match event {
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } => {
+                    let _ = toggle_small_window(app.clone(), true);
+                }
+                // macOS のメニューは押した時に開くのが標準なので Down で開く
+                #[cfg(target_os = "macos")]
+                TrayIconEvent::Click {
+                    button: MouseButton::Right,
+                    button_state: MouseButtonState::Down,
+                    ..
+                } => popup_tray_menu(tray, &context_menu),
+                _ => {}
             }
         })
         .build(app)?;
 
     Ok(())
+}
+
+/// 右クリックの時だけ status item に menu を付けて開き、閉じたら外す (`setup_tray` 参照)。
+///
+/// トレイのイベントは main スレッドで届き、`set_menu` / `with_inner_tray_icon` は
+/// main スレッドからならその場で実行される。`show_menu` (= ボタンの `performClick:`) は
+/// menu を付けた status item ではメニューを閉じるまで戻らないので、戻った時点で外してよい。
+/// 選んだ項目のイベントはイベントループに積まれ、menu を外した後で `on_menu_event` に届く
+/// (ハンドラは menu ではなく項目の id で振り分けるので、外してあっても動く)。
+#[cfg(target_os = "macos")]
+fn popup_tray_menu(tray: &tauri::tray::TrayIcon, menu: &tauri::menu::Menu<tauri::Wry>) {
+    if let Err(e) = tray.set_menu(Some(menu.clone())) {
+        eprintln!("astragal: failed to attach the tray menu: {e}");
+        return;
+    }
+    if let Err(e) = tray.with_inner_tray_icon(|inner| inner.show_menu()) {
+        eprintln!("astragal: failed to show the tray menu: {e}");
+    }
+    if let Err(e) = tray.set_menu(None::<tauri::menu::Menu<tauri::Wry>>) {
+        eprintln!("astragal: failed to detach the tray menu: {e}");
+    }
 }
 
 /// ログイン時の自動起動の登録。macOS は `~/Library/LaunchAgents` の plist、Windows は
@@ -1452,7 +1525,9 @@ fn hide_on_close(win: &WebviewWindow) {
     win.on_window_event(move |event| {
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
             api.prevent_close();
-            let _ = target.hide();
+            if target.hide().is_ok() {
+                dock_follows(&target, false);
+            }
         }
     });
 }
@@ -1472,7 +1547,9 @@ fn hide_on_blur<F: Fn() + Send + 'static>(win: &WebviewWindow, on_hide: F) {
         if *focused {
             focused_once.store(true, Ordering::Relaxed);
         } else if focused_once.swap(false, Ordering::Relaxed) {
-            let _ = target.hide();
+            if target.hide().is_ok() {
+                dock_follows(&target, false);
+            }
             on_hide();
         }
     });
@@ -1549,9 +1626,10 @@ pub fn run() {
             next_launch_id: Mutex::new(0),
         })
         .setup(move |app| {
-            // Dock に出さない。メニューバー常駐が主で、Dock アイコンから起動する
-            // 導線が無いため。Info.plist の LSUIElement はバンドルにしか効かず、
-            // dev 実行では素のバイナリが動くので実行時にも設定する。
+            // 起動時は Dock に出さない。main を出している間だけ Regular にする
+            // (`dock_follows`)。--minimized の自動起動ではメニューバーだけに常駐する。
+            // Info.plist の LSUIElement はバンドルにしか効かず、dev 実行では素の
+            // バイナリが動くので実行時にも設定する。
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
@@ -1608,6 +1686,7 @@ pub fn run() {
                 // 自動起動ではメニューバーだけに常駐する。main はトレイメニューか
                 // ホットキーで出す (present_window が front に表示を伝える)
                 if !launched_minimized(std::env::args()) {
+                    dock_follows(&win, true);
                     win.show()?;
                     let _ = win.set_focus();
                 }
@@ -1633,8 +1712,18 @@ pub fn run() {
             hide_window,
             show_window,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Dock アイコンのクリック (と、起動済みの .app を Finder から開き直した時)。
+            // Dock に出ているのは main の表示中だけだが、他アプリの背後にあれば前に出す
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                let _ = show_window(app.clone());
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
 }
 
 #[cfg(test)]
