@@ -23,6 +23,7 @@ public リポジトリなので、**README・UI 文字列・エラーメッセ�
 | `src-tauri/src/config.rs` | `~/.config/astragal/config.yaml` の読み込みとマージ |
 | `src/terminal.ts` | xterm の生成とテーマ適用 |
 | `src/links.ts` | URL の検出と Cmd+クリックでの起動 |
+| `src-tauri/src/cli.rs` | コマンドライン引数 (`-e` / `--working-directory`)、ターミナルからの起動し直し、`/usr/local/bin` への導入 |
 | `src/tabs.ts` | タブ管理、Cmd 系キーバインド、Ctrl+Tab のタブ巡回、Cmd+Shift+[ / ] のタブ移動、Cmd+K のクリア |
 | `src/ai.ts` / `src-tauri/src/ai.rs` | Cmd+I の Ask AI (依頼からシェルコマンドを 1 行作り、プロンプトに貼り付ける。既定は無効) |
 | `src/search.ts` | Cmd+F の検索バー (xterm-addon-search)。ウインドウに 1 つで、アクティブなタブを検索する |
@@ -89,6 +90,32 @@ Cmd+K (Windows は Ctrl+Shift+K) は `terminal.clear()` で、シェルには何
 `xterm-addon-search` 0.13 は行テキストのキャッシュをカーソル移動でしか捨てず、
 プロンプトが同じ位置へ戻ると新しい出力が検索に掛からない。`createSearchAddon` が
 書き込みのたびに非公開の `_destroyLinesCache` を呼んで回避している。
+
+## コマンドライン (`astragal -e`)
+
+`/usr/local/bin/astragal` は .app の中のバイナリへのシンボリックリンク (トレイメニューの
+Install 'astragal' Command in PATH で作る)。設計上の前提:
+
+- **ターミナルから直接起動されたら `open -n -a` で起動し直す** (`relaunch_from_terminal`)。
+  未起動の時にそのまま本体になると、ターミナルの子として残り、タブを閉じた時の SIGHUP で
+  落ちる。判定は「親が launchd (pid 1) でない」かつ「.app の中で動いている」。dev 実行
+  (`pnpm tauri dev`) はバンドルの外なので起動し直さない
+- 起動し直したプロセスの cwd は `/` なので、`-e` の開始位置は `--working-directory=` で
+  明示して渡す。起動済みなら、起動し直したプロセスが single-instance の Unix ソケットで
+  本体へ argv を送って終わる (cwd も送られるが `/` なので使えない)
+- 本体はタブを開く要求を `AppState.launch_requests` に積み、main の front が id で
+  `create_terminal` に渡して取り出す。front が起動前でも取りこぼさないように、イベント
+  (`launch-requested`) と `pending_launches` の両方から拾い、front 側で重複を除く。
+  イベントは `present_window` の前に送る (後だと `window-shown` の補充で空のタブが増える)
+- `-e` は xterm / Ghostty と同じく残りの引数をすべて取る。iTerm2 に相当する CLI は無い
+- **Windows の single-instance は argv を `|` で連結・分割して送る** (plugin 2.4.3 の
+  `platform_impl/windows.rs`)。パイプ入りの `-e` が割れるので、引数に `|` があれば
+  `--exec-base64=` に包んで自分を起動し直してから送る (`forward_without_pipes`)。
+  包むのはコマンドだけなので、作業ディレクトリに `|` が残る時は送らずに止める
+  (起動し直した先でも `|` が見つかり、起動し直しが終わらなくなる)。
+  Windows で `-e` の後ろに複数の引数を取らないのは、cmd と PowerShell で引用の規則が違うため
+- `--minimized` / `--help` の判定も `cli::parse` を通す。argv 全体を探すと `-e` の
+  コマンドの引数に反応する
 
 ## Ask AI (CYBERNEURA-DEV-898)
 
