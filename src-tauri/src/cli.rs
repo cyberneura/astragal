@@ -156,7 +156,11 @@ pub struct LaunchRequest {
 
 /// タブを開く要求に変換する。`fallback_cwd` は呼び出し元プロセスの cwd で、
 /// `--working-directory` が無い時に `-e` のタブの開始位置に使う。
-pub fn launch_request(id: u32, args: &CliArgs, fallback_cwd: Option<&Path>) -> Option<LaunchRequest> {
+pub fn launch_request(
+    id: u32,
+    args: &CliArgs,
+    fallback_cwd: Option<&Path>,
+) -> Option<LaunchRequest> {
     // `--help -e cmd` でコマンドを実行しない
     if args.help || !args.opens_tab() {
         return None;
@@ -207,9 +211,16 @@ pub fn relaunch_from_terminal() -> Option<i32> {
     }
 
     let cwd = std::env::current_dir().ok();
-    let forwarded = launch_request(0, &parsed, cwd.as_deref())
+    let forwarded = match launch_request(0, &parsed, cwd.as_deref())
         .map(|request| forwarded_args(request, false))
-        .unwrap_or_default();
+    {
+        Some(Ok(forwarded)) => forwarded,
+        Some(Err(e)) => {
+            eprintln!("astragal: {e}");
+            return Some(2);
+        }
+        None => Vec::new(),
+    };
 
     let status = std::process::Command::new("/usr/bin/open")
         .arg("-n")
@@ -239,11 +250,21 @@ fn app_bundle(exe: &Path) -> Option<PathBuf> {
     is_bundle.then(|| bundle.to_path_buf())
 }
 
-/// 本体へ渡す引数。cwd は呼び出し元で解決して明示する (受け取る側の cwd は当てにならない)
-fn forwarded_args(request: LaunchRequest, encode_exec: bool) -> Vec<String> {
+/// 本体へ渡す引数。cwd は呼び出し元で解決して明示する (受け取る側の cwd は当てにならない)。
+///
+/// 引数は String で受け渡すので、UTF-8 でないパスは表せない。`display()` で置換文字に
+/// 化けたパスを渡すと別の場所でタブが開くので、エラーにする (APFS / HFS+ では起きず、
+/// ネットワークボリューム等でだけありうる)
+fn forwarded_args(request: LaunchRequest, encode_exec: bool) -> Result<Vec<String>, String> {
     let mut forwarded = Vec::new();
     if let Some(dir) = request.cwd {
-        forwarded.push(format!("{WORKING_DIRECTORY_ARG}={}", dir.display()));
+        let dir = dir.to_str().ok_or_else(|| {
+            format!(
+                "the working directory is not valid UTF-8: {}",
+                dir.display()
+            )
+        })?;
+        forwarded.push(format!("{WORKING_DIRECTORY_ARG}={dir}"));
     }
     if let Some(command) = request.exec {
         forwarded.push(if encode_exec {
@@ -255,7 +276,7 @@ fn forwarded_args(request: LaunchRequest, encode_exec: bool) -> Vec<String> {
             format!("--exec={command}")
         });
     }
-    forwarded
+    Ok(forwarded)
 }
 
 /// 引数に `|` があれば、`-e` を base64 で包んだ引数で自分を起動し直す (Windows)。
@@ -275,7 +296,7 @@ pub fn forward_without_pipes() -> Option<i32> {
     let parsed = parse(&argv).ok()?;
     let cwd = std::env::current_dir().ok();
     let request = launch_request(0, &parsed, cwd.as_deref())?;
-    let forwarded = forwarded_args(request, true);
+    let forwarded = forwarded_args(request, true).ok()?;
     // 包むのはコマンドだけ。作業ディレクトリに `|` が残る (Windows のパスには使えない
     // 文字なので誤入力) なら起動し直さない。起動し直した先でも `|` が見つかり終わらなく
     // なるため。このまま続ければ、起動済みなら本体が割れた引数の誤りをダイアログで出し、
@@ -284,8 +305,7 @@ pub fn forward_without_pipes() -> Option<i32> {
         return None;
     }
     let exe = std::env::current_exe().ok()?;
-    match std::process::Command::new(exe).args(forwarded).spawn()
-    {
+    match std::process::Command::new(exe).args(forwarded).spawn() {
         Ok(_) => Some(0),
         Err(e) => {
             eprintln!("astragal: failed to relaunch: {e}");
@@ -416,7 +436,10 @@ mod tests {
         let parsed = parse(&args).unwrap();
 
         // Assert
-        assert_eq!(parsed.exec.as_deref(), Some("ls -la 'my dir' --working-directory"));
+        assert_eq!(
+            parsed.exec.as_deref(),
+            Some("ls -la 'my dir' --working-directory")
+        );
         assert_eq!(parsed.working_directory, None);
     }
 
@@ -438,11 +461,15 @@ mod tests {
     #[test]
     fn working_directory_accepts_both_forms() {
         assert_eq!(
-            parse(argv(&["--working-directory", "/tmp"])).unwrap().working_directory,
+            parse(argv(&["--working-directory", "/tmp"]))
+                .unwrap()
+                .working_directory,
             Some(PathBuf::from("/tmp"))
         );
         assert_eq!(
-            parse(argv(&["--working-directory=/a b"])).unwrap().working_directory,
+            parse(argv(&["--working-directory=/a b"]))
+                .unwrap()
+                .working_directory,
             Some(PathBuf::from("/a b"))
         );
         assert!(parse(argv(&["--working-directory"])).is_err());
@@ -483,13 +510,32 @@ mod tests {
         };
 
         // Act
-        let forwarded = forwarded_args(request.clone(), true);
-        let reparsed = parse(std::iter::once("astragal".to_string()).chain(forwarded.clone())).unwrap();
+        let forwarded = forwarded_args(request.clone(), true).unwrap();
+        let reparsed =
+            parse(std::iter::once("astragal".to_string()).chain(forwarded.clone())).unwrap();
 
         // Assert
         assert!(forwarded.iter().all(|arg| !arg.contains('|')));
         assert_eq!(reparsed.exec, request.exec);
         assert_eq!(reparsed.working_directory, request.cwd);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_working_directory_is_not_forwarded() {
+        use std::os::unix::ffi::OsStrExt;
+        // Arrange
+        let request = LaunchRequest {
+            id: 0,
+            exec: Some("pwd".to_string()),
+            cwd: Some(PathBuf::from(std::ffi::OsStr::from_bytes(b"/tmp/\xff"))),
+        };
+
+        // Act
+        let forwarded = forwarded_args(request, false);
+
+        // Assert
+        assert!(forwarded.is_err());
     }
 
     #[cfg(windows)]
@@ -556,10 +602,15 @@ mod tests {
     #[test]
     fn app_bundle_is_found_only_inside_a_bundle() {
         assert_eq!(
-            app_bundle(Path::new("/Applications/Astragal.app/Contents/MacOS/astragal")),
+            app_bundle(Path::new(
+                "/Applications/Astragal.app/Contents/MacOS/astragal"
+            )),
             Some(PathBuf::from("/Applications/Astragal.app"))
         );
-        assert_eq!(app_bundle(Path::new("/repo/src-tauri/target/debug/astragal")), None);
+        assert_eq!(
+            app_bundle(Path::new("/repo/src-tauri/target/debug/astragal")),
+            None
+        );
     }
 
     #[test]
@@ -568,6 +619,9 @@ mod tests {
             "/private/var/folders/x/AppTranslocation/ABC/d/Astragal.app/Contents/MacOS/astragal",
         );
         assert!(install_target(exe).is_err());
-        assert!(install_target(Path::new("/Applications/Astragal.app/Contents/MacOS/astragal")).is_ok());
+        assert!(install_target(Path::new(
+            "/Applications/Astragal.app/Contents/MacOS/astragal"
+        ))
+        .is_ok());
     }
 }
