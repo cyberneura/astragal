@@ -76,10 +76,11 @@ astragal --working-directory ~/src      # open a new tab in ~/src
 ```
 
 - `-e` / `--exec` runs the command with your shell (`shell.command` and `shell.args`
-  plus `-c`; `/C` for cmd and `-Command` for PowerShell), in a new tab of the main
-  window. A single argument goes to the shell as is, so it can hold pipes; several
-  arguments are quoted one by one and joined. On Windows, pass the command as one
-  argument (`-e "dir | findstr foo"`), since cmd and PowerShell quote differently
+  plus `-c`; `/C` for cmd, `-Command` for PowerShell, and `-e sh -c` for `wsl.exe`),
+  in a new tab of the main window. A single argument goes to the shell as is, so it
+  can hold pipes; several arguments are quoted one by one and joined. On Windows, pass
+  the command as one argument (`-e "dir | findstr foo"`), since cmd and PowerShell
+  quote differently
 - The tab starts in the current directory, or in `--working-directory`
 - `astragal` returns right away and does not wait for the command. When the command
   exits, the tab stays open with its output unless you typed into it (the same rule as

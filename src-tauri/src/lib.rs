@@ -204,7 +204,9 @@ fn shell_command(shell: &config::ShellConfig, launch: Option<&cli::LaunchRequest
         cmd.arg(arg);
     }
     if let Some(command) = launch.and_then(|launch| launch.exec.as_deref()) {
-        cmd.arg(cli::shell_exec_flag(&program));
+        for arg in cli::shell_exec_args(&program) {
+            cmd.arg(arg);
+        }
         cmd.arg(command);
     }
     cmd.env("TERM", "xterm-256color");
@@ -1430,6 +1432,19 @@ fn report_cli_error(app: &AppHandle, error: &str) {
     let _ = app;
 }
 
+/// `--help` を本体で受けた時 (Windows と、起動済みの本体へ送られた時)。macOS は
+/// ターミナル側 (`relaunch_from_terminal`) で表示済みなので何もしない
+fn report_cli_help(app: &AppHandle) {
+    #[cfg(windows)]
+    app.dialog()
+        .message(cli::USAGE)
+        .title("Astragal")
+        .kind(MessageDialogKind::Info)
+        .show(|_| {});
+    #[cfg(not(windows))]
+    let _ = app;
+}
+
 /// 赤ボタンでウインドウを閉じずに隠す。閉じると webview ごと破棄されるので、
 /// トレイから開き直しても復元できず、ターミナルのセッションも失われる。
 fn hide_on_close(win: &WebviewWindow) {
@@ -1475,6 +1490,9 @@ pub fn run() {
     if let Some(code) = cli::forward_without_pipes() {
         std::process::exit(code);
     }
+    // Windows のリリース版は GUI サブシステムで、ここで print しても見えない。
+    // 起動してからダイアログで出す (`report_cli_help`)
+    #[cfg(not(windows))]
     if cli::parse(std::env::args()).is_ok_and(|parsed| parsed.help) {
         print!("{}", cli::USAGE);
         return;
@@ -1498,6 +1516,9 @@ pub fn run() {
                     // 起動済みのところへ自動起動が重なった時は、ウインドウを出さない
                     if launched_minimized(&args) {
                         return;
+                    }
+                    if parsed.help {
+                        report_cli_help(app);
                     }
                     queue_launch(app, &parsed, Some(std::path::Path::new(&cwd)))
                 }
@@ -1536,6 +1557,9 @@ pub fn run() {
 
             match cli::parse(std::env::args()) {
                 Ok(parsed) => {
+                    if parsed.help {
+                        report_cli_help(app.handle());
+                    }
                     let cwd = std::env::current_dir().ok();
                     queue_launch(app.handle(), &parsed, cwd.as_deref());
                 }

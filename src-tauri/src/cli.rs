@@ -131,16 +131,18 @@ fn quote_arg(_arg: &str) -> Result<String, String> {
     Err("on Windows, pass the command as one argument: -e \"COMMAND ARGS\"".to_string())
 }
 
-/// シェルにコマンド文字列を実行させる引数。cmd と PowerShell は `-c` を受け付けない
-pub fn shell_exec_flag(shell: &Path) -> &'static str {
+/// シェルにコマンド文字列を実行させる引数。cmd と PowerShell は `-c` を受け付けない。
+/// wsl.exe はシェルではなく起動口なので、distro の中の sh に `-c` で渡す
+pub fn shell_exec_args(shell: &Path) -> &'static [&'static str] {
     let name = shell
         .file_stem()
         .map(|name| name.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
     match name.as_str() {
-        "cmd" => "/C",
-        "powershell" | "pwsh" => "-Command",
-        _ => "-c",
+        "cmd" => &["/C"],
+        "powershell" | "pwsh" => &["-Command"],
+        "wsl" => &["-e", "sh", "-c"],
+        _ => &["-c"],
     }
 }
 
@@ -542,12 +544,13 @@ mod tests {
     }
 
     #[test]
-    fn shell_exec_flag_follows_the_shell() {
-        assert_eq!(shell_exec_flag(Path::new("/bin/zsh")), "-c");
-        assert_eq!(shell_exec_flag(Path::new("/opt/homebrew/bin/fish")), "-c");
-        assert_eq!(shell_exec_flag(Path::new("cmd.exe")), "/C");
-        assert_eq!(shell_exec_flag(Path::new("pwsh.exe")), "-Command");
-        assert_eq!(shell_exec_flag(Path::new("PowerShell.EXE")), "-Command");
+    fn shell_exec_args_follow_the_shell() {
+        assert_eq!(shell_exec_args(Path::new("/bin/zsh")), ["-c"]);
+        assert_eq!(shell_exec_args(Path::new("/opt/homebrew/bin/fish")), ["-c"]);
+        assert_eq!(shell_exec_args(Path::new("cmd.exe")), ["/C"]);
+        assert_eq!(shell_exec_args(Path::new("pwsh.exe")), ["-Command"]);
+        assert_eq!(shell_exec_args(Path::new("PowerShell.EXE")), ["-Command"]);
+        assert_eq!(shell_exec_args(Path::new("wsl.exe")), ["-e", "sh", "-c"]);
     }
 
     #[test]
