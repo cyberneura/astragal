@@ -3,6 +3,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Terminal } from "xterm";
 import type { IDisposable, ITheme } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
+import { ImageAddon } from "xterm-addon-image";
 import type { SearchAddon } from "xterm-addon-search";
 import { Unicode11Addon } from "xterm-addon-unicode11";
 import { enableLinks } from "./links";
@@ -217,6 +218,7 @@ export async function startSession(
 
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
+  terminal.loadAddon(createImageAddon());
   const search = createSearchAddon(terminal);
   const links = enableLinks(terminal);
 
@@ -336,6 +338,24 @@ export function writeConfigWarning(session: Session, config: AppConfig): void {
     `\x1b[33mastragal: ${config.warning.replace(/\n/g, "\r\n")}\x1b[0m\r\n` +
       `\x1b[90m(${config.config_path})\x1b[0m\r\n`,
   );
+}
+
+/**
+ * インライン画像 (imgcat の iTerm2 Inline Image Protocol と SIXEL)。
+ *
+ * 画像は xterm の描画とは別のキャンバスに重ねて描かれるので、レンダラー (既定の DOM) は
+ * そのままでよい。addon は画像を RGBA で保持するため、上限はタブ 1 つあたり
+ * storageLimit (MB) で、超えた分は古い順に捨てて代わりにプレースホルダーを出す。
+ * 既定の 128 MB はタブが増えると効いてくるので下げている。
+ *
+ * enableSizeReports (既定 ON) は CSI 14 / 16 / 18 t への応答で、ウインドウとセルのピクセル
+ * サイズを画像を出す側に返す。imgcat は使わないが、端末に合わせて縮めてから出すツールの
+ * ために既定のままにしている。
+ */
+function createImageAddon(): ImageAddon {
+  return new ImageAddon({
+    storageLimit: 64,
+  });
 }
 
 function writeStdin(id: number, bytes: Uint8Array): void {
