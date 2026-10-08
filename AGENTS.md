@@ -21,7 +21,7 @@ public リポジトリなので、**README・UI 文字列・エラーメッセ�
 |---|---|
 | `src-tauri/src/lib.rs` | pty セッション、ウインドウ配置、トレイ、ホットキー |
 | `src-tauri/src/config.rs` | `~/.config/astragal/config.yaml` の読み込みとマージ |
-| `src/terminal.ts` | xterm の生成とテーマ適用 |
+| `src/terminal.ts` | xterm の生成とテーマ適用、インライン画像 (imgcat / SIXEL) の addon |
 | `src/links.ts` | URL の検出と Cmd+クリックでの起動 |
 | `src-tauri/src/cli.rs` | コマンドライン引数 (`-e` / `--working-directory`)、ターミナルからの起動し直し、`/usr/local/bin` への導入 |
 | `src/tabs.ts` | タブ管理、Cmd 系キーバインド、Ctrl+Tab のタブ巡回、Cmd+Shift+[ / ] のタブ移動、Cmd+K のクリア |
@@ -90,6 +90,25 @@ Cmd+K (Windows は Ctrl+Shift+K) は `terminal.clear()` で、シェルには何
 `xterm-addon-search` 0.13 は行テキストのキャッシュをカーソル移動でしか捨てず、
 プロンプトが同じ位置へ戻ると新しい出力が検索に掛からない。`createSearchAddon` が
 書き込みのたびに非公開の `_destroyLinesCache` を呼んで回避している。
+
+## インライン画像 (CYBERNEURA-DEV-976)
+
+`xterm-addon-image` (0.5.0、legacy の `xterm` 5.x 向けの最終版) で iTerm2 の Inline Image
+Protocol (OSC 1337、imgcat が出す) と SIXEL を描く。このリポジトリは scoped でない
+`xterm` / `xterm-addon-*` で揃えているので、`@xterm/addon-image` は使えない (別パッケージの
+`Terminal` を要求する)。`@xterm/*` へ一括で移行する時に一緒に載せ替える。
+
+- 画像は addon が `.xterm-screen` に重ねる自前のキャンバスに描くので、レンダラーは既定の
+  DOM のままでよい (canvas / webgl addon は要らない)
+- **`size=` は実際のバイト数と一致していないと無言で捨てられる** (addon の base64 デコーダが
+  宣言サイズで判定する)。imgcat は `wc -c` の値を送るので合う。手で試す時は注意
+- pty からは 4096 バイトずつ届く (`lib.rs` の reader thread) が、OSC は xterm のパーサーが
+  跨いで組み立てるので分割は問題にならない
+- `storageLimit` はタブ 1 つあたり。addon は画像を RGBA で保持するので、既定の 128 MB を
+  64 MB に下げている (`createImageAddon`)
+- 実機は無いが、`Terminal` + `ImageAddon` だけの harness をリモート Chrome に読ませれば
+  描画まで実測できる (2026-10-08 に PNG の IIP と SIXEL を確認。size をずらすと落ちることも
+  同じ方法で確認した)
 
 ## コマンドライン (`astragal -e`)
 

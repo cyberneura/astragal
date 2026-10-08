@@ -20,6 +20,8 @@ A lightweight terminal app for macOS and Windows (Tauri 2.x + xterm.js).
 - Cmd+K clears the active tab's screen and scrollback, keeping the line you are typing
   (the same as Clear Buffer in iTerm2). It does nothing while a full-screen program such
   as vim or less is showing; the scrollback is still there once you leave it
+- Inline images: `imgcat` (iTerm2's inline image protocol) and SIXEL output are drawn in
+  the terminal. See [Inline images](#inline-images)
 - Cmd+click a URL to open it in the default browser. Holding Cmd underlines the URL
   under the pointer, and a URL that soft-wraps across lines opens in full
 - Click the menu bar icon to show or hide the popover; right-click it for the menu
@@ -232,6 +234,16 @@ config_override_command: op read "op://development/astragal/config-yaml"
   path (on macOS, `/opt/homebrew/bin` and `/usr/local/bin` are appended to `PATH`).
 - It times out after 60 seconds. If the command fails, Astragal starts with the local
   config and prints the reason in the terminal as a warning.
+
+## Inline images
+
+Astragal draws images sent with iTerm2's inline image protocol (what `imgcat` from
+iTerm2's shell integration emits, `ESC ] 1337 ; File=inline=1;size=N: <base64> BEL`)
+and SIXEL, using xterm.js's image addon. PNG, JPEG and GIF (first frame only) are
+supported. The `size` field has to be the exact byte count of the file; `imgcat` sends it
+that way, but a sequence with a wrong size is dropped silently. Images are kept per tab up
+to 64 MB of decoded pixels; older ones are evicted first and leave a placeholder pattern in
+the scrollback.
 
 ## Development
 
