@@ -187,7 +187,8 @@ jobs:
   # 一覧から探し、無ければ作る」。macOS と Windows のビルドがほぼ同時に終わると両方が
   # 「無い」と判断し、同じ tag の draft が 2 つできる。publish はそのうち片方しか公開
   # できず、もう片方のプラットフォームの成果物が Release から欠ける。ここで作った id を
-  # releaseId で渡せば、tauri-action は探しも作りもせずそこへ上げる
+  # releaseId で渡せば、tauri-action は探しも作りもせずそこへ上げる (Windows)。
+  # macOS は dmg を公証してから、同じ id を指定して gh api で上げる
   # (queryfolio / flashcap の release.yml と同じ構成。CYBERNEURA-DEV-771)。
   #
   # 失敗した run が残した draft は再利用し、target_commitish をこの run の commit に
@@ -257,7 +258,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Intel / Apple Silicon 両対応の universal dmg。Developer ID 署名 + 公証。
+          # Intel / Apple Silicon 両対応の universal dmg。Developer ID 署名 + 公証 (.app と dmg の両方)。
           - platform: macos-latest
             rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
             args: --target universal-apple-darwin --bundles dmg
@@ -277,7 +278,7 @@ jobs:
       # .git/config に残さないようにする。以降のステップ (pnpm install の install
       # script や third-party action) がそれを拾えないようにするため。
       # Apple の証明書を扱うジョブなので `uses:` は全て commit SHA に固定する
-      # (tauri-action だけ固定しても、先行ステップの action が改変されれば同じ)。
+      # (改変された action が後のステップの Secret や keychain に触れられるため)。
       # 更新時は行末の `# v4` 等のコメントを頼りに新しい SHA を調べて置き換える。
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -314,10 +315,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # 署名・公証の Secret が 1 つでも欠けていると、tauri-action には空文字が渡るだけで
-      # ビルドは通ってしまう (公証なしの成果物ができる)。publish ジョブは成否しか
-      # 見ないため、そのまま「署名 + 公証済み」のつもりで公開される。ここで明示的に
-      # 落として、配布不能な dmg が公開されるのを防ぐ。
+      # 署名・公証の Secret が 1 つでも欠けていると、tauri CLI には空文字が渡るだけで
+      # 署名や .app の公証が黙って飛ばされる。後の証明書のインポートか dmg の公証でも
+      # 落ちるはずだが、どの Secret が無いのかが分からないので、ビルドの前にここで名前を
+      # 出して落とす。
       - name: Check macOS signing secrets
         if: matrix.platform == 'macos-latest'
         env:
@@ -341,8 +342,9 @@ jobs:
           fi
           echo "All signing and notarization secrets are present."
 
-      # Developer ID 証明書を一時 keychain にインポートする。tauri-action 自身は
-      # 証明書をインポートしないため、ビルド前にこのステップで用意しておく。
+      # Developer ID 証明書を一時 keychain にインポートする。tauri CLI も APPLE_CERTIFICATE を
+      # 渡せば自分でインポートするが、Build ステップには APPLE_SIGNING_IDENTITY だけを渡し、
+      # keychain はこのステップで用意する (両方で行うと、同じ証明書が 2 つの keychain に入る)。
       # keychain のパスワードは使い捨てなので Secret にせずその場で生成する。
       - name: Import Apple Developer certificate
         if: matrix.platform == 'macos-latest'
@@ -374,29 +376,99 @@ jobs:
           }
           rm "$RUNNER_TEMP/certificate.p12"
 
-      # draft ジョブが用意した draft Release (releaseId) にビルド成果物をアップロードする。
+      # macOS は tauri CLI を直接叩き、package.json の "tauri" スクリプトを迂回する。
+      # スクリプト側に署名 identity を書く運用になった時に、env で渡した Secret が
+      # インライン代入で上書きされるのを防ぐ (シェルのインライン代入は継承した
+      # env より優先される)。
+      # APPLE_* を渡すと tauri CLI が .app に Developer ID 署名 + 公証 + staple を行い、
+      # dmg にも署名する。dmg の公証はしないので次のステップで行う。
+      - name: Build (sign and notarize the app)
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm exec tauri build ${{ matrix.args }}
+
+      # dmg を公証しないと、ダウンロードした dmg が Gatekeeper の検査 (spctl --type open) で
+      # rejected (Unnotarized Developer ID) になる。中の .app は公証済みでも、dmg は別に要る。
+      - name: Notarize the dmg
+        if: matrix.platform == 'macos-latest'
+        id: dmg
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          # target/ に前の version の dmg が残っていても拾わないよう、version で絞り、
+          # ちょうど 1 つであることを確かめる。
+          shopt -s nullglob
+          dmgs=(src-tauri/target/universal-apple-darwin/release/bundle/dmg/*_"${VERSION}"_universal.dmg)
+          if [ ${#dmgs[@]} -ne 1 ]; then
+            echo "::error::expected exactly one dmg for ${VERSION}, found ${#dmgs[@]}: ${dmgs[*]}"
+            exit 1
+          fi
+          DMG="${dmgs[0]}"
+          # exit code と status の両方で判定する。submit が非 0 で終わってもステップを
+          # すぐ終わらせず、出力と公証のログ (Invalid の理由) を残してから落とす。
+          rc=0
+          result=$(xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" \
+            --wait --output-format json) || rc=$?
+          echo "$result"
+          status=$(echo "$result" | jq -r '.status // empty' 2>/dev/null || true)
+          if [ "$rc" -ne 0 ] || [ "$status" != "Accepted" ]; then
+            id=$(echo "$result" | jq -r '.id // empty' 2>/dev/null || true)
+            if [ -n "$id" ]; then
+              xcrun notarytool log "$id" \
+                --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" || true
+            fi
+            echo "::error::notarization of the dmg failed (exit ${rc}, status '${status:-none}')"
+            exit 1
+          fi
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          spctl --assess --type open --context context:primary-signature -vv "$DMG"
+          echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
+
+      # draft ジョブが用意した draft Release に、tag ではなく ID で上げる。
       # ビルドが途中で失敗しても不完全な Release が公開されないよう、全プラットフォームの
-      # 成功後に publish ジョブで公開する。releaseId を渡すと tauri-action は Release を
-      # 探しも作りもしないので、tagName / releaseName / releaseDraft は渡さない
-      # (Release の名前と tag は draft ジョブが決める)。再実行では同名の asset を差し替える。
-      # APPLE_* を渡すと tauri-action が Developer ID 署名 + 公証 + staple を行う
-      # (macOS のジョブにだけ渡す。Windows では空文字にして露出させない)。
-      # Apple 認証情報を受け取るため、可変タグ @v0 ではなく commit SHA に固定する
-      # (タグが差し替えられて secrets を抜かれるサプライチェーン攻撃を防ぐ)。
+      # 成功後に publish ジョブで公開する。
+      - name: Upload the dmg to the draft release
+        if: matrix.platform == 'macos-latest'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ needs.draft.outputs.release_id }}
+          DMG: ${{ steps.dmg.outputs.dmg }}
+        run: |
+          NAME=$(basename "$DMG")
+          export NAME
+          # 再実行では前の run が上げた同名の asset が残っていて、同じ名前では上げられない。
+          for id in $(gh api "repos/${GH_REPO}/releases/${RELEASE_ID}/assets?per_page=100" \
+            --jq '.[] | select(.name == env.NAME) | .id'); do
+            gh api -X DELETE "repos/${GH_REPO}/releases/assets/${id}"
+            echo "Deleted the previous asset ${id} (${NAME})."
+          done
+          gh api -X POST "https://uploads.github.com/repos/${GH_REPO}/releases/${RELEASE_ID}/assets?name=${NAME}" \
+            -H "Content-Type: application/x-apple-diskimage" --input "$DMG" --jq '.browser_download_url'
+
+      # Windows は tauri-action がビルドと、draft Release (releaseId) へのアップロードを行う。
+      # releaseId を渡すと tauri-action は Release を探しも作りもしないので、tagName /
+      # releaseName / releaseDraft は渡さない (Release の名前と tag は draft ジョブが決める)。
+      # 再実行では同名の asset を差し替える。
+      # 可変タグ @v0 ではなく commit SHA に固定する (タグが差し替えられて
+      # contents: write のトークンを抜かれるサプライチェーン攻撃を防ぐ)。
       - name: Build and upload to GitHub Release (draft)
+        if: matrix.platform == 'windows-latest'
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_SIGNING_IDENTITY: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_SIGNING_IDENTITY || '' }}
-          APPLE_ID: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_ID || '' }}
-          APPLE_PASSWORD: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_PASSWORD || '' }}
-          APPLE_TEAM_ID: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_TEAM_ID || '' }}
         with:
-          # tauri CLI を直接叩き、package.json の "tauri" スクリプトを迂回する。
-          # スクリプト側に署名 identity を書く運用になった時に、env で渡した Secret が
-          # インライン代入で上書きされるのを防ぐ (シェルのインライン代入は継承した
-          # env より優先される)。
-          # (インラインの env 代入は Windows のシェルでは構文エラーにもなる)
+          # tauri CLI を直接叩き、package.json の "tauri" スクリプトを迂回する
+          # (インラインの env 代入は Windows のシェルでは構文エラーになる)。
           tauriScript: pnpm exec tauri
           releaseId: ${{ needs.draft.outputs.release_id }}
           args: ${{ matrix.args }}

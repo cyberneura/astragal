@@ -46,7 +46,7 @@ brew install --cask cyberneura/tap/astragal
 ```
 
 Releases are universal `.dmg` files (Intel / Apple Silicon), signed with a Developer ID
-and notarized.
+and notarized (both the app and the `.dmg`).
 
 ### Windows
 
@@ -278,14 +278,16 @@ pnpm release major
 
 `scripts/release.sh` only runs when `main` is clean and matches `origin/main`. The build
 runs on macOS and Windows runners in parallel. The macOS job goes through Developer ID
-signing and notarization and uploads the universal `.dmg`; the Windows job uploads the
+signing and notarization (the tauri CLI notarizes the `.app`, then `notarytool` notarizes
+and staples the `.dmg`) and uploads the universal `.dmg`; the Windows job uploads the
 unsigned NSIS installer (`*_x64-setup.exe`). Both go into one draft Release for the
 `v<version>` tag, which is published only after both succeed. Pull requests run the
 tests on both macOS and Windows. The signing secrets
 (`APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` / `APPLE_SIGNING_IDENTITY` /
 `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID`) are already registered on the
-repository, and the build fails up front if any one of them is missing (if it went ahead
-without them, an unnotarized `.dmg` would be published silently).
+repository, and the build fails up front, naming the missing one, if any of them is
+missing (the tauri CLI would otherwise skip signing or notarizing the app without an
+error).
 
 The Homebrew cask (cyberneura/homebrew-tap) updates itself hourly from the latest
 release, so it can take up to an hour for a new version to show up in `brew`. The
