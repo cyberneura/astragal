@@ -2,6 +2,8 @@
 
 A lightweight terminal app for macOS and Windows (Tauri 2.x + xterm.js).
 
+Website: https://www.cyberneura.com/app/astragal
+
 - A main window with tabs. Hiding a window with no tabs left and showing it again
   opens a fresh tab, in both the main window and the popover
 - A small popover terminal that drops down from the menu bar (tray) icon
