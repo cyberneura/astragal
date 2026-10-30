@@ -255,7 +255,8 @@ fn parse_destination(destination: &str) -> Option<(Option<String>, String, Optio
     if let Some(rest) = destination.strip_prefix("ssh://") {
         let authority = rest.split('/').next().unwrap_or(rest);
         let (user, hostport) = match authority.rsplit_once('@') {
-            Some((user, hostport)) => (Some(user.to_string()), hostport),
+            // URI の user は URL エンコードできる (OpenSSH の parse_uri が urldecode する)
+            Some((user, hostport)) => (Some(percent_decode(user)?), hostport),
             None => (None, authority),
         };
         let (host, port) = if let Some(inner) = hostport.strip_prefix('[') {
@@ -284,6 +285,28 @@ fn parse_destination(destination: &str) -> Option<(Option<String>, String, Optio
         return None;
     }
     Some((user, host, None))
+}
+
+/// `%XX` を戻す。不正な並びと NUL は OpenSSH の urldecode と同じく失敗にする
+fn percent_decode(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = std::str::from_utf8(bytes.get(i + 1..i + 3)?).ok()?;
+            let byte = u8::from_str_radix(hex, 16).ok()?;
+            if byte == 0 {
+                return None;
+            }
+            out.push(byte);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 /// scp の引数 (プログラム名を除く) を組み立てる
@@ -491,6 +514,17 @@ mod tests {
         assert_eq!(t.options, argv("-o User=me -o Port=2022"));
         let t = target("ssh ::1").unwrap();
         assert_eq!(t.host, "[::1]");
+    }
+
+    #[test]
+    fn uri_user_is_percent_decoded() {
+        let t = target("ssh ssh://user%40foo@localhost:22").unwrap();
+        assert_eq!(t.label, "user@foo@localhost:22");
+        assert_eq!(t.options, argv("-o User=user@foo -o Port=22"));
+        assert!(target("ssh ssh://bad%4@host").is_none());
+        assert!(target("ssh ssh://nul%00@host").is_none());
+        // URI でない接続先の user はそのまま (ssh も decode しない)
+        assert_eq!(target("ssh a%40b@host").unwrap().label, "a%40b@host");
     }
 
     #[test]
