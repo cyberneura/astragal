@@ -38,6 +38,10 @@ tauri-plugin-dialog = "2"
 # Ask AI (ai.rs)。tauri が既に引いている版に合わせ、TLS は OS のもの (macOS は Security.framework、Windows は SChannel) を使う
 reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }
 
+# ドロップしたファイルを scp で送る時に、前面の ssh の argv を読む (remote_drop.rs。macOS は sysctl)
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

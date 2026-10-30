@@ -372,6 +372,163 @@ html, body {
   color: #ff8a85;
 }
 
+/* ── Drop to Remote (scp) ─────────────────────────────────────────────────── */
+
+/* ssh で繋いでいるタブにファイルをドラッグしている間、ターミナル全体に重ねる */
+#drop-zone {
+  position: absolute;
+  inset: 6px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(79 168 255 / 12%);
+  border: 2px dashed #4fa8ff;
+  border-radius: 10px;
+  pointer-events: none;
+}
+
+#drop-zone[hidden],
+#drop-dialog[hidden] {
+  display: none;
+}
+
+.drop-zone-label {
+  padding: 8px 14px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #e6e6e6;
+  font-size: 13px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 40%);
+}
+
+#drop-dialog {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(0 0 0 / 45%);
+}
+
+.drop-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(440px, calc(100% - 28px));
+  padding: 14px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 50%);
+  color: #e6e6e6;
+  font-size: 13px;
+}
+
+.drop-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.drop-files {
+  margin: 0;
+  padding: 0 0 0 18px;
+  color: #bdbdbd;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+}
+
+.drop-files li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drop-files li.more {
+  color: #9a9a9a;
+  list-style: none;
+}
+
+.drop-dir {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #9a9a9a;
+  font-size: 11px;
+}
+
+.drop-dir-input {
+  height: 26px;
+  padding: 0 8px;
+  background: #111111;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  color: #e6e6e6;
+  font: inherit;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  outline: none;
+  /* 全体の user-select: none を継ぐと WebKit では入力欄の文字を選択できなくなる */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.drop-dir-input:focus {
+  border-color: #4fa8ff;
+}
+
+.drop-note {
+  color: #9a9a9a;
+  font-size: 11px;
+  white-space: pre-wrap;
+  /* エラーの文面をコピーできるように */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.drop-note.error {
+  color: #ff8a85;
+}
+
+.drop-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.drop-button {
+  min-width: 72px;
+  height: 26px;
+  padding: 0 12px;
+  background: #3a3a3a;
+  border: 1px solid #4a4a4a;
+  border-radius: 5px;
+  color: #e6e6e6;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.drop-button:hover {
+  background: #464646;
+}
+
+.drop-button.primary {
+  background: #2f6fb3;
+  border-color: #3b82cf;
+}
+
+.drop-button.primary:hover {
+  background: #3b82cf;
+}
+
+.drop-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* ── Startup Error ────────────────────────────────────────────────────────── */
 
 .startup-error,
