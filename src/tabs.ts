@@ -20,6 +20,7 @@ import {
 } from "./search";
 import { IS_WINDOWS, shortcutLabel } from "./platform";
 import { closeAi, initAi, openAi, syncAiWithActiveTab } from "./ai";
+import { initRemoteDrop } from "./remote-drop";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -644,6 +645,7 @@ export async function initTabs(ui: TabElements, config: AppConfig): Promise<void
   ui.newTabButton.title = `New tab (${shortcutLabel("⌘T", "Ctrl+Shift+T")})`;
   initSearch(ui.terminalsContainer, () => activeTab()?.session);
   initAi(ui.terminalsContainer, config.ai_enabled, () => activeTab()?.session);
+  void initRemoteDrop(ui.terminalsContainer, () => activeTab()?.session);
   document.addEventListener("keydown", handleCycleKeydown, true);
   document.addEventListener("keyup", handleCycleKeyup, true);
   // ウインドウが背面へ回ると Ctrl の keyup が届かない (吹き出しは blur で隠れる)。

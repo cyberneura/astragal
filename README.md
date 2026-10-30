@@ -35,6 +35,13 @@ Website: https://www.cyberneura.com/app/astragal
 - Ask AI (optional, off by default): press Cmd+I, describe what you want to do, and a
   shell command is typed into the prompt for you to check and run yourself. See
   [Ask AI](#ask-ai)
+- Drop files to copy them over ssh: while the active tab is running `ssh` (directly in the
+  tab, not inside tmux), dragging files over the window highlights it as a drop zone.
+  Dropping them asks for confirmation and a remote directory (your home directory by
+  default), then copies them with `scp` using the same host, user, port, identity and
+  `-o` options as that ssh. Folders are copied recursively. Authentication must work
+  without typing (keys, an agent, or an ssh ControlMaster connection), because there is
+  no terminal to type a password into
 - Run a command in a new tab from the command line: `astragal -e 'free -m | grep Mem'`.
   See [Command line](#command-line)
 - Configuration through `~/.config/astragal/config.yaml`
@@ -117,6 +124,7 @@ too, with these differences:
   | Cmd+click a URL | Ctrl+click a URL |
   | Cmd+Shift+[ / ] (previous / next tab) | Not available; use Ctrl+Tab / Ctrl+Shift+Tab |
 
+- Dropping files to copy them over ssh is not available.
 - The popover opens from the notification area icon. With the taskbar at the bottom of
   the screen it opens above the icon.
 - In `hotkeys`, `Command` / `Super` means the Windows key. The defaults

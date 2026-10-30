@@ -1,6 +1,7 @@
 mod ai;
 mod cli;
 mod config;
+mod remote_drop;
 
 use base64::Engine;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
@@ -505,6 +506,105 @@ fn close_terminal(app: AppHandle, tab_id: u32) -> Result<(), String> {
         *slot = None;
     }
     Ok(())
+}
+
+// ── Drop to Remote (scp) ─────────────────────────────────────────────────────
+
+/// タブの pty の前面で動いている ssh の接続先、接続の同一性を比べる値 (`SshTarget::identity`)、
+/// その ssh の環境変数。ssh でなければ (シェルのプロンプト、vim、ローカルのコマンド等) `None`
+#[cfg(unix)]
+fn foreground_ssh(
+    app: &AppHandle,
+    tab_id: u32,
+) -> Result<Option<(remote_drop::SshTarget, String, Vec<String>)>, String> {
+    let app_state = app.state::<AppState>();
+    let pid = {
+        let sessions = app_state.sessions.lock().map_err(|e| e.to_string())?;
+        match sessions.get(tab_id as usize) {
+            Some(Some(session)) => session.master.process_group_leader(),
+            _ => return Err(format!("No session for tab_id {}", tab_id)),
+        }
+    };
+    let Some(pid) = pid.filter(|pid| *pid > 0) else {
+        return Ok(None);
+    };
+    Ok(remote_drop::process_args(pid).and_then(|(argv, env)| {
+        remote_drop::parse_ssh_argv(&argv).map(|target| {
+            let identity = target.identity(pid);
+            (target, identity, env)
+        })
+    }))
+}
+
+#[cfg(not(unix))]
+fn foreground_ssh(
+    _app: &AppHandle,
+    _tab_id: u32,
+) -> Result<Option<(remote_drop::SshTarget, String, Vec<String>)>, String> {
+    Ok(None)
+}
+
+/// ドロップを受け付けるか。タブが ssh で繋いでいれば接続先を返す
+#[tauri::command]
+fn remote_drop_target(
+    app: AppHandle,
+    tab_id: u32,
+) -> Result<Option<remote_drop::DropTarget>, String> {
+    Ok(
+        foreground_ssh(&app, tab_id)?.map(|(target, key, _)| remote_drop::DropTarget {
+            label: target.label,
+            key,
+        }),
+    )
+}
+
+/// ドロップされたファイルを scp で送る。`expected` は確認ダイアログを出した時の
+/// `DropTarget::key` で、確認の間に ssh を抜けたり繋ぎ直したりしていたら送らない
+#[tauri::command]
+async fn remote_drop_upload(
+    app: AppHandle,
+    tab_id: u32,
+    expected: String,
+    paths: Vec<String>,
+    remote_dir: String,
+) -> Result<(), String> {
+    if paths.is_empty() {
+        return Err("No files to copy".into());
+    }
+    let Some((target, key, env)) = foreground_ssh(&app, tab_id)? else {
+        return Err("The tab is no longer connected over ssh".into());
+    };
+    if key != expected {
+        return Err(format!(
+            "The ssh connection in the tab has changed (now {}). Drop the files again",
+            target.label
+        ));
+    }
+    let recursive = paths.iter().any(|path| std::path::Path::new(path).is_dir());
+    let args = remote_drop::scp_args(&target, &paths, &remote_dir, recursive);
+    let mut command = std::process::Command::new("scp");
+    command.args(&args).stdin(std::process::Stdio::null());
+    if let Some(sock) = remote_drop::env_value(&env, "SSH_AUTH_SOCK") {
+        command.env("SSH_AUTH_SOCK", sock);
+    }
+    let output = tauri::async_runtime::spawn_blocking(move || command.output())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("Failed to run scp: {e}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let tail: Vec<&str> = stderr
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    let tail = tail[tail.len().saturating_sub(5)..].join("\n");
+    Err(if tail.is_empty() {
+        format!("scp exited with {}", output.status)
+    } else {
+        tail
+    })
 }
 
 // ── Window Management ────────────────────────────────────────────────────────
@@ -1792,6 +1892,8 @@ pub fn run() {
             write_stdin,
             resize_terminal,
             close_terminal,
+            remote_drop_target,
+            remote_drop_upload,
             toggle_window,
             show_small_window,
             hide_window,

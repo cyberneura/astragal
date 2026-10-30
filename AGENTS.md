@@ -26,6 +26,7 @@ public リポジトリなので、**README・UI 文字列・エラーメッセ�
 | `src-tauri/src/cli.rs` | コマンドライン引数 (`-e` / `--working-directory`)、ターミナルからの起動し直し、`/usr/local/bin` への導入 |
 | `src/tabs.ts` | タブ管理、Cmd 系キーバインド、Ctrl+Tab のタブ巡回、Cmd+Shift+[ / ] のタブ移動、Cmd+K のクリア |
 | `src/ai.ts` / `src-tauri/src/ai.rs` | Cmd+I の Ask AI (依頼からシェルコマンドを 1 行作り、プロンプトに貼り付ける。既定は無効) |
+| `src/remote-drop.ts` / `src-tauri/src/remote_drop.rs` | ssh 中のタブへファイルをドロップして scp で送る (ドロップゾーンと確認ダイアログ / ssh の argv の解釈と scp の引数) |
 | `src/search.ts` | Cmd+F の検索バー (xterm-addon-search)。ウインドウに 1 つで、アクティブなタブを検索する |
 | `src/main.ts` / `src/small.ts` | メインウインドウ / 吹き出しの入口 |
 | `src/about.ts` | トレイメニューの About から開くウインドウ |
@@ -109,6 +110,37 @@ Protocol (OSC 1337、imgcat が出す) と SIXEL を描く。このリポジト�
 - 実機は無いが、`Terminal` + `ImageAddon` だけの harness をリモート Chrome に読ませれば
   描画まで実測できる (2026-10-08 に PNG の IIP と SIXEL を確認。size をずらすと落ちることも
   同じ方法で確認した)
+
+## ドロップして scp で送る (CYBERNEURA-DEV-1177)
+
+アクティブなタブの pty の前面のプロセスグループのリーダーが `ssh` の時だけ、ドロップした
+ファイルを scp でそのホストへ送る。設計上の前提:
+
+- **ssh かどうかと接続先は Rust だけが決める。** `MasterPty::process_group_leader` (tcgetpgrp) の
+  PID の argv を、macOS は `sysctl(KERN_PROCARGS2)`、Linux は `/proc/<pid>/cmdline` で読み、
+  `remote_drop::parse_ssh_argv` が ssh.c と同じ getopt の規則で解釈する (接続先の後ろのオプションも
+  読み直す。`ssh host -p 2222` が通る)。フロントはタブ id と、確認ダイアログを出した時の `key`
+  (`SshTarget::identity` = PID + scp に渡すオプション + ホスト) しか渡さない。送る直前に読み直して比べ、確認の間に
+  ssh を抜けた・繋ぎ直した時は断る。表示用の `label` では比べない (`-o HostName` や `-F` の違いが出ないため)
+- 接続に効くオプションだけを scp に写す。**ssh の優先順位を崩さないこと。** ssh は user / port を
+  「まだ決まっていなければ」で埋める (`-l` / `-p` / `-o User` / `-o Port` / 接続先の中の値は先に出たものが勝つ) ので、
+  全部 `-o User=` / `-o Port=` にして argv の順のまま渡し、内側の ssh に選ばせる (scp の `-P` は使わない)。
+  `-S/-b/-B/-m/-I/-P` は ssh が後から上書きする (後勝ち) ので、最後の値だけを `-o` にして先頭に置く。
+  `-c/-F/-i/-J/-o` はそのまま。相対パスの `-F` は ssh の作業ディレクトリで読まれるので、対象外にする。転送 (`-L/-R/-D/-w`) は捨てる。`-o RemoteCommand` / `RequestTTY` 等は
+  scp と両立しないので捨てる。`-G/-V/-Q/-O/-W/-f` を含む起動 (対話の接続ではない) と、知らない
+  オプションを含む起動は対象外。tmux / mosh / autossh 越しの ssh は前面のプロセスが ssh ではないので出ない
+- scp は `-o BatchMode=yes` で、標準入力も閉じて起動する。GUI から起動した scp には端末が無く、
+  パスワードを尋ねられると答えようがない (止まったままになる)。鍵・エージェント・ssh の
+  ControlMaster で繋いでいる接続先だけで送れる。エージェントのソケットは ssh のプロセスの環境変数の
+  `SSH_AUTH_SOCK` を引き継ぐ (シェルの rc で 1Password 等に向けているとアプリの環境と違うため)
+- 送り先は確認ダイアログで決める (既定は `~` = ホーム)。ディレクトリ名の末尾に `/` を付けるので、
+  無いディレクトリを指定するとその名前のファイルを作らずに失敗する。ディレクトリを含むと `-r`。
+  送り元は `--` の後ろに置く (ドロップされるパスは絶対パスなので、`:` を含んでもリモート扱いにならない)
+- ssh の cwd は見ていない。`-i` に相対パスを渡した ssh だと scp が鍵を見つけられないことがある (送り先は変わらない)
+- Windows は対象外 (ConPTY の前面のプロセスを取れない。`remote_drop_target` が常に `None`)
+- macOS の `process_args` (sysctl) はこのリポジトリの Linux 環境では検査できない。`parse_procargs2` は
+  純粋な関数にしてテストしてある。ドラッグの見た目はリモート Chrome に Tauri API をモックした
+  harness で確認した (2026-10-30)。実機での確認は未実施
 
 ## コマンドライン (`astragal -e`)
 
