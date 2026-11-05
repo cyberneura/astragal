@@ -321,6 +321,8 @@ async function closeTab(tabId: number) {
       activeTabId = null;
       closeSearch();
       closeAi();
+      // 閉じたタブの要約がバーに残らないように
+      syncTabSummaryWithActiveTab();
     }
   }
 
