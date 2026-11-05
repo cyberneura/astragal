@@ -2,6 +2,7 @@ mod ai;
 mod cli;
 mod config;
 mod remote_drop;
+mod tab_summary;
 
 use base64::Engine;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
@@ -117,6 +118,15 @@ struct FrontendConfig {
     warning: Option<String>,
     /// Ask AI (Cmd+I) を出すか。API キーなど他の ai の設定は webview に渡さない
     ai_enabled: bool,
+    /// タブ名と要約の自動生成。provider と API キーは webview に渡さない
+    tab_summary: FrontendTabSummary,
+}
+
+#[derive(Serialize)]
+struct FrontendTabSummary {
+    enabled: bool,
+    display: config::TabSummaryDisplay,
+    interval_seconds: u64,
 }
 
 #[tauri::command]
@@ -138,7 +148,33 @@ fn get_config(app: AppHandle) -> FrontendConfig {
         config_path: loaded.path.display().to_string(),
         warning: (!warnings.is_empty()).then(|| warnings.join("\n")),
         ai_enabled: loaded.config.ai.enabled,
+        tab_summary: FrontendTabSummary {
+            enabled: loaded.config.tab_summary.enabled,
+            display: loaded.config.tab_summary.display,
+            interval_seconds: loaded.config.tab_summary.interval_seconds,
+        },
     }
+}
+
+/// タブ名と要約を作る (tab_summary.rs)。`content` はフロントが切り出したタブの末尾の行、
+/// `other_titles` は他のタブの今の名前 (重ならないようにするため)。
+#[tauri::command]
+async fn tab_summary_generate(
+    app: AppHandle,
+    content: String,
+    other_titles: Vec<String>,
+) -> Result<tab_summary::TabSummary, String> {
+    // State は await を跨いで持てないので、使う値を先に取り出す
+    let (summary_config, ai_config, shell) = {
+        let state = app.state::<AppState>();
+        let config = &state.config.config;
+        (
+            config.tab_summary.clone(),
+            config.ai.clone(),
+            config.shell.resolve_command(),
+        )
+    };
+    tab_summary::generate(&summary_config, &ai_config, &shell, &content, &other_titles).await
 }
 
 /// Ask AI: 依頼からシェルコマンドを 1 行作ってもらう。打ち込みはフロントが行い、
@@ -1882,6 +1918,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_config,
             ai_suggest_command,
+            tab_summary_generate,
             app_info,
             about_window_ready,
             third_party_notices,

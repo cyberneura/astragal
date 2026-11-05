@@ -185,6 +185,15 @@ ai: # Ask AI (Cmd+I). Off by default
   api_key: "" # defaults to the ANTHROPIC_API_KEY environment variable
   model: claude-opus-5
   effort: low # sent as output_config.effort; "" to leave it out
+
+tab_summary: # Tab names and summaries. Off by default
+  enabled: false
+  provider: claude-code # claude-code / codex / fm / openai / anthropic
+  display: tooltip # tooltip (hover a tab) or bar (a line under the tab bar)
+  model: "" # empty uses the provider's default
+  command: "" # CLI to run for claude-code / codex / fm; empty uses claude / codex / fm
+  api_key: "" # for openai / anthropic
+  interval_seconds: 120 # at least 15
 ```
 
 Hotkey modifiers are `Control` / `Option` (`Alt`) / `Shift` / `Command` (`Cmd`, `Super`).
@@ -229,6 +238,48 @@ ai:
 - An answer that spans several lines or contains control characters is shown as an error
   instead of being typed in, so nothing can run before you see it. Nothing is typed in
   while a full-screen program such as vim is showing either.
+
+### Tab names and summaries
+
+Astragal can name each tab after what you are doing in it ("API server", "cargo test")
+and write a one- or two-sentence summary of its latest state. A name is at most 10
+full-width or 20 half-width characters and differs from the names of the other open tabs
+(a number is added when two would clash). The summary shows as the tab's tooltip, or in a
+line under the tab bar with `display: bar`.
+
+It is off until you turn it on, because it sends what is on the screen to the provider:
+
+```yaml
+tab_summary:
+  enabled: true
+  provider: claude-code
+```
+
+| `provider` | Runs | Default model |
+|---|---|---|
+| `claude-code` | the Claude Code CLI (`claude -p`), on your Claude subscription | `haiku` |
+| `codex` | the Codex CLI (`codex exec`), on your ChatGPT subscription | the CLI's default |
+| `fm` | `fm respond`, Apple's on-device Foundation Models (needs a macOS with the `fm` command). Nothing leaves the Mac | — |
+| `openai` | the OpenAI API (`tab_summary.api_key` or `OPENAI_API_KEY`) | `gpt-6-luna` |
+| `anthropic` | the Anthropic API (`tab_summary.api_key`, `ai.api_key` or `ANTHROPIC_API_KEY`) | `claude-haiku-5-5` |
+
+- **When it runs**: 5 seconds after a tab stops printing, at most once per
+  `interval_seconds` (120 by default) per tab, one tab at a time. A tab whose text has not
+  changed since the last time is not sent again.
+- **What is sent**: the last 120 lines of the tab's main screen (up to 8,000 characters;
+  2,000 for `fm`) and the names of the other tabs. The text of a full-screen program such
+  as vim is not sent.
+- **The CLIs run without tools.** Terminal output can contain anything, including text
+  written to look like instructions, so `claude` is started with `--tools ""` and no MCP
+  servers or settings, and `codex` with its shell, browser and app tools disabled and without your
+  `~/.codex/config.toml` (so no MCP servers). They
+  run in an empty temporary directory.
+- `claude` and `codex` are started through your login shell (zsh / bash) so that they find
+  `node` and themselves on your usual `PATH`. With another shell, or if they are installed
+  somewhere unusual, set `command` to the full path. On Windows, `command` must point to an
+  executable (`.exe`), not a `.cmd` shim.
+- When a summary fails (the CLI is not installed, not logged in, no API key…), the reason
+  is shown where the summary would be and the tab keeps its name.
 
 ### config_override_command
 
