@@ -271,7 +271,7 @@ tab_summary:
   as vim is not sent.
 - **The CLIs run without tools.** Terminal output can contain anything, including text
   written to look like instructions, so `claude` is started with `--tools ""` and no MCP
-  servers or settings, and `codex` with its shell, browser and app tools disabled and without your
+  servers or settings, and `codex` with its shell, code, image, browser, app and sub-agent tools disabled and without your
   `~/.codex/config.toml` (so no MCP servers). They
   run in an empty temporary directory.
 - `claude` and `codex` are started through your login shell (zsh / bash) so that they find

@@ -337,20 +337,35 @@ fn cli_invocation(
                     // --disable では消えず、ファイルの読み書きや外部送信の道具になりうる
                     // (認証は CODEX_HOME のまま使われる)
                     "--ignore-user-config",
-                    // コマンドの実行・ブラウザ・アプリ連携を切る。read-only の sandbox でも
-                    // ファイルは読めるので、中身に書かれた指示で読みに行かせない
+                    // コマンドの実行・code mode の JS・画像の読み込み・ブラウザ・アプリ連携・サブエージェントを
+                    // 切る。read-only の sandbox でもファイルは読めるので、中身に書かれた指示で読みに行かせない。
+                    // codex 0.156 で、これを全部切ると /etc/hostname を読めないことを確かめた
+                    // (view_image は画像のパスを渡されるとそのファイルを読む。code_mode_host は functions.exec)。
+                    // 知らない名前を渡すと codex は起動を断る (古い codex では要約が失敗するだけで、緩む方には倒れない)
                     "--disable",
                     "shell_tool",
                     "--disable",
                     "unified_exec",
                     "--disable",
+                    "code_mode_host",
+                    "--disable",
+                    "view_image",
+                    "--disable",
+                    "image_generation",
+                    "--disable",
                     "apps",
+                    "--disable",
+                    "plugins",
+                    "--disable",
+                    "remote_plugin",
                     "--disable",
                     "browser_use",
                     "--disable",
                     "in_app_browser",
                     "--disable",
                     "computer_use",
+                    "--disable",
+                    "multi_agent",
                     "-c",
                     "web_search=disabled",
                 ]
@@ -838,9 +853,13 @@ mod tests {
         for feature in [
             "shell_tool",
             "unified_exec",
+            "code_mode_host",
+            "view_image",
             "apps",
+            "plugins",
             "browser_use",
             "computer_use",
+            "multi_agent",
         ] {
             assert!(
                 invocation

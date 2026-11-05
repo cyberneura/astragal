@@ -205,6 +205,8 @@ async function generate(tab: TrackedTab): Promise<void> {
     if (tracked.get(tab.target.id) !== tab) {
       return;
     }
+    // 同じ中身でも次の出力の後に送り直す (ログインし直した・設定を直した後に、失敗の表示が残り続けないように)
+    tab.lastContent = "";
     // 名前は変えずに、失敗した理由を要約の場所に出す (CLI が見つからない等に気付けるように)
     console.error("astragal: could not summarize the tab", error);
     tab.summary = `Could not summarize this tab: ${String(error)}`;
