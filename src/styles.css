@@ -185,6 +185,27 @@ html, body {
   min-width: 24px;
 }
 
+/* ── Tab Summary Bar (tab_summary.display: bar) ───────────────────────────── */
+
+/* タブバーの直下の 1 行。要約の有無で高さを変えない (ターミナルの行数が動くため) */
+#tab-summary-bar {
+  height: 22px;
+  line-height: 22px;
+  padding: 0 12px;
+  flex-shrink: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: #9a9a9a;
+  background: var(--terminal-background);
+  border-bottom: 1px solid #2a2a2a;
+}
+
+#tab-summary-bar.empty {
+  color: #5a5a5a;
+}
+
 /* ── Terminal Container ───────────────────────────────────────────────────── */
 
 #terminals {

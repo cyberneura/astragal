@@ -38,6 +38,13 @@ const DEFAULT_AI_MODEL: &str = "claude-opus-5";
 const DEFAULT_AI_EFFORT: &str = "low";
 /// `ai.api_key` が空の時に読む環境変数。
 const AI_API_KEY_ENV: &str = "ANTHROPIC_API_KEY";
+/// `tab_summary.api_key` が空で provider が openai の時に読む環境変数。
+const OPENAI_API_KEY_ENV: &str = "OPENAI_API_KEY";
+/// タブ名と要約を作り直す最短の間隔の既定値 (秒)。CLI の provider は 1 回に数秒〜数十秒
+/// かかり、サブスクリプションの利用枠も食うので、出力が続くタブでも詰めすぎない。
+const DEFAULT_TAB_SUMMARY_INTERVAL_SECS: u64 = 120;
+/// 間隔の下限 (秒)。0 や 1 を書かれて出力のたびに CLI が起動するのを防ぐ。
+const MIN_TAB_SUMMARY_INTERVAL_SECS: u64 = 15;
 
 const MAIN_WINDOW_DEFAULT: ResolvedWindow = ResolvedWindow {
     width: 900.0,
@@ -119,6 +126,32 @@ const CONFIG_TEMPLATE: &str = r##"# Astragal config file
 #   # Sent as output_config.effort. Use "" for models without effort (claude-haiku-4-5).
 #   effort: low
 
+# Tab names and summaries: name each tab (up to 10 full-width / 20 half-width
+# characters, unique among the open tabs) and summarize what is going on in it, from
+# the last lines of its output. Off by default. When on, the last ~120 lines of each
+# tab that printed something are sent to the provider below, at most once per
+# interval_seconds per tab.
+# tab_summary:
+#   enabled: true
+#   # claude-code: the Claude Code CLI (`claude -p`, uses your Claude subscription)
+#   # codex: the Codex CLI (`codex exec`, uses your ChatGPT subscription)
+#   # fm: Apple's on-device Foundation Models (`fm respond`; nothing leaves the Mac)
+#   # openai: the OpenAI API (needs api_key or OPENAI_API_KEY)
+#   # anthropic: the Anthropic API (needs api_key, ai.api_key or ANTHROPIC_API_KEY)
+#   provider: claude-code
+#   # Where to show the summary: tooltip (hover a tab) or bar (a line under the tab bar)
+#   display: tooltip
+#   # Empty uses the provider's default (claude-code: haiku, openai: gpt-6-luna,
+#   # anthropic: claude-haiku-5-5, codex: the CLI's own default). Not used by fm.
+#   model: ""
+#   # Path or name of the CLI for claude-code / codex / fm. Empty uses claude / codex / fm.
+#   command: ""
+#   # API key for openai / anthropic. Rather than writing it here, put it in the YAML
+#   # that config_override_command prints.
+#   api_key: ""
+#   # The shortest time between two updates of the same tab (seconds, at least 15).
+#   interval_seconds: 120
+
 # config_override_command runs a command whose stdout must be YAML, and merges
 # that YAML over this file. Mappings are merged recursively; scalars and lists
 # are replaced wholesale.
@@ -142,6 +175,98 @@ pub struct Config {
     /// xterm の theme にそのまま渡す。既定テーマの上にキー単位で被せる。
     pub theme: BTreeMap<String, String>,
     pub ai: AiConfig,
+    pub tab_summary: TabSummaryConfig,
+}
+
+/// タブ名と要約の生成元。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TabSummaryProvider {
+    /// Claude Code の CLI (`claude -p`)。サブスクリプションで使う想定
+    ClaudeCode,
+    /// Codex の CLI (`codex exec`)。サブスクリプションで使う想定
+    Codex,
+    /// macOS のオンデバイス Foundation Models (`fm respond`)
+    Fm,
+    #[serde(rename = "openai")]
+    OpenAi,
+    Anthropic,
+}
+
+/// 要約を出す場所。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TabSummaryDisplay {
+    /// タブにマウスを載せた時のツールチップ
+    Tooltip,
+    /// タブバーの下の 1 行
+    Bar,
+}
+
+/// タブ名と要約の自動生成 (tab_summary.rs)。既定は無効。
+///
+/// 有効にすると、出力のあったタブの末尾の行を provider へ送る。Ask AI と違って
+/// ターミナルの中身そのものを送る機能なので、既定は OFF にして README に送る範囲を書く。
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TabSummaryConfig {
+    pub enabled: bool,
+    pub provider: TabSummaryProvider,
+    pub display: TabSummaryDisplay,
+    /// 空なら provider ごとの既定 (tab_summary.rs の `default_model`)
+    pub model: String,
+    /// CLI の provider で起動するコマンド。空なら claude / codex / fm
+    pub command: String,
+    /// openai / anthropic の API キー。空なら環境変数 (anthropic は ai.api_key も見る)
+    pub api_key: String,
+    pub interval_seconds: u64,
+}
+
+impl Default for TabSummaryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: TabSummaryProvider::ClaudeCode,
+            display: TabSummaryDisplay::Tooltip,
+            model: String::new(),
+            command: String::new(),
+            api_key: String::new(),
+            interval_seconds: DEFAULT_TAB_SUMMARY_INTERVAL_SECS,
+        }
+    }
+}
+
+/// API キーをログやパニックのメッセージに出さないよう、Debug では伏せる。
+impl std::fmt::Debug for TabSummaryConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TabSummaryConfig")
+            .field("enabled", &self.enabled)
+            .field("provider", &self.provider)
+            .field("display", &self.display)
+            .field("model", &self.model)
+            .field("command", &self.command)
+            .field("api_key", &if self.api_key.is_empty() { "" } else { "***" })
+            .field("interval_seconds", &self.interval_seconds)
+            .finish()
+    }
+}
+
+impl TabSummaryConfig {
+    /// openai / anthropic で使う API キー。設定 → (anthropic なら ai.api_key) → 環境変数の順。
+    pub fn resolve_api_key(&self, ai: &AiConfig) -> Option<String> {
+        let key = self.api_key.trim();
+        if !key.is_empty() {
+            return Some(key.to_string());
+        }
+        match self.provider {
+            TabSummaryProvider::Anthropic => ai.resolve_api_key(),
+            TabSummaryProvider::OpenAi => std::env::var(OPENAI_API_KEY_ENV)
+                .ok()
+                .map(|key| key.trim().to_string())
+                .filter(|key| !key.is_empty()),
+            _ => None,
+        }
+    }
 }
 
 /// Cmd+I のコマンド提案 (Ask AI)。既定は無効で、`enabled: true` を書いた時だけ動く。
@@ -372,6 +497,14 @@ impl Config {
         if self.ai.model.trim().is_empty() {
             warnings.push("ai.model is empty; using the default".to_string());
             self.ai.model = DEFAULT_AI_MODEL.to_string();
+        }
+        if self.tab_summary.interval_seconds < MIN_TAB_SUMMARY_INTERVAL_SECS {
+            warnings.push(format!(
+                "tab_summary.interval_seconds must be at least {MIN_TAB_SUMMARY_INTERVAL_SECS} \
+                 (got {}); using {MIN_TAB_SUMMARY_INTERVAL_SECS}",
+                self.tab_summary.interval_seconds
+            ));
+            self.tab_summary.interval_seconds = MIN_TAB_SUMMARY_INTERVAL_SECS;
         }
         warnings
     }
@@ -644,7 +777,7 @@ fn read_all<R: Read>(pipe: &mut Option<R>) -> Vec<u8> {
     buffer
 }
 
-fn supplemented_path() -> String {
+pub fn supplemented_path() -> String {
     supplement_path(&std::env::var("PATH").unwrap_or_default())
 }
 
@@ -789,6 +922,99 @@ mod tests {
         // Assert
         assert!(default_config.terminal.close_on_exit);
         assert!(!config.terminal.close_on_exit);
+    }
+
+    #[test]
+    fn tab_summary_is_off_unless_turned_on() {
+        // Arrange
+        let doc = mapping(
+            "tab_summary:\n  enabled: true\n  provider: openai\n  display: bar\n  api_key: sk-x\n",
+        );
+
+        // Act
+        let default_config = Config::default();
+        let config: Config = serde_yaml::from_value(Value::Mapping(doc)).expect("should parse");
+
+        // Assert
+        assert!(!default_config.tab_summary.enabled);
+        assert_eq!(
+            default_config.tab_summary.provider,
+            TabSummaryProvider::ClaudeCode
+        );
+        assert_eq!(
+            default_config.tab_summary.display,
+            TabSummaryDisplay::Tooltip
+        );
+        assert!(config.tab_summary.enabled);
+        assert_eq!(config.tab_summary.provider, TabSummaryProvider::OpenAi);
+        assert_eq!(config.tab_summary.display, TabSummaryDisplay::Bar);
+        assert_eq!(
+            config.tab_summary.resolve_api_key(&config.ai).as_deref(),
+            Some("sk-x")
+        );
+    }
+
+    #[test]
+    fn tab_summary_provider_names_parse() {
+        for (name, provider) in [
+            ("claude-code", TabSummaryProvider::ClaudeCode),
+            ("codex", TabSummaryProvider::Codex),
+            ("fm", TabSummaryProvider::Fm),
+            ("openai", TabSummaryProvider::OpenAi),
+            ("anthropic", TabSummaryProvider::Anthropic),
+        ] {
+            // Act
+            let doc = mapping(&format!("tab_summary:\n  provider: {name}\n"));
+            let config: Config = serde_yaml::from_value(Value::Mapping(doc)).expect("should parse");
+
+            // Assert
+            assert_eq!(config.tab_summary.provider, provider, "{name}");
+        }
+    }
+
+    #[test]
+    fn anthropic_tab_summary_falls_back_to_the_ask_ai_key() {
+        // Arrange
+        let doc = mapping("ai:\n  api_key: sk-ai\ntab_summary:\n  provider: anthropic\n");
+        let config: Config = serde_yaml::from_value(Value::Mapping(doc)).expect("should parse");
+
+        // Act
+        let key = config.tab_summary.resolve_api_key(&config.ai);
+
+        // Assert
+        assert_eq!(key.as_deref(), Some("sk-ai"));
+    }
+
+    #[test]
+    fn too_short_tab_summary_interval_is_raised() {
+        // Arrange
+        let doc = mapping("tab_summary:\n  interval_seconds: 1\n");
+        let mut config: Config = serde_yaml::from_value(Value::Mapping(doc)).expect("should parse");
+
+        // Act
+        let warnings = config.sanitize();
+
+        // Assert
+        assert_eq!(
+            config.tab_summary.interval_seconds,
+            MIN_TAB_SUMMARY_INTERVAL_SECS
+        );
+        assert!(warnings.iter().any(|w| w.contains("interval_seconds")));
+    }
+
+    #[test]
+    fn tab_summary_api_key_is_masked_in_debug_output() {
+        // Arrange
+        let config = TabSummaryConfig {
+            api_key: "sk-secret".to_string(),
+            ..TabSummaryConfig::default()
+        };
+
+        // Act
+        let text = format!("{config:?}");
+
+        // Assert
+        assert!(!text.contains("sk-secret"));
     }
 
     #[test]

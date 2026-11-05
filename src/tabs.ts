@@ -21,6 +21,13 @@ import {
 import { IS_WINDOWS, shortcutLabel } from "./platform";
 import { closeAi, initAi, openAi, syncAiWithActiveTab } from "./ai";
 import { initRemoteDrop } from "./remote-drop";
+import {
+  displaysInTooltip,
+  initTabSummary,
+  syncTabSummaryWithActiveTab,
+  trackTab,
+  untrackTab,
+} from "./tab-summary";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -28,6 +35,8 @@ interface TerminalTab {
   session: Session;
   element: HTMLDivElement;
   button: HTMLButtonElement;
+  /** タブ名。閉じるボタンと分けてあるので、名前だけを書き換えられる */
+  label: HTMLSpanElement;
 }
 
 /** コマンドラインから届いたタブを開く要求 (lib.rs の LaunchInfo) */
@@ -73,11 +82,18 @@ let appConfig: AppConfig;
 
 // ── Tabs ─────────────────────────────────────────────────────────────────────
 
-function createTabButton(tabId: number, label: string): HTMLButtonElement {
+function createTabButton(
+  tabId: number,
+  label: string,
+): { button: HTMLButtonElement; label: HTMLSpanElement } {
   const button = document.createElement("button");
   button.className = "tab-button";
-  button.textContent = label;
   button.dataset.tabId = String(tabId);
+
+  const text = document.createElement("span");
+  text.className = "tab-label";
+  text.textContent = label;
+  button.appendChild(text);
   button.addEventListener("click", () => switchToTab(tabId));
 
   const close = document.createElement("span");
@@ -90,7 +106,7 @@ function createTabButton(tabId: number, label: string): HTMLButtonElement {
   button.appendChild(close);
 
   elements.tabContainer.appendChild(button);
-  return button;
+  return { button, label: text };
 }
 
 export async function createTab(launch?: LaunchInfo): Promise<void> {
@@ -124,11 +140,23 @@ async function openTab(launch?: LaunchInfo): Promise<void> {
     return;
   }
 
-  const button = createTabButton(session.id, tabLabel(launch));
+  const { button, label } = createTabButton(session.id, tabLabel(launch));
   if (launch?.label) {
     button.title = launch.label;
   }
-  tabs.push({ session, element, button });
+  tabs.push({ session, element, button, label });
+  trackTab({
+    id: session.id,
+    terminal: session.terminal,
+    title: () => label.textContent ?? "",
+    apply: (title, summary) => {
+      label.textContent = title;
+      if (displaysInTooltip()) {
+        // 要約が無ければ、元のツールチップ (-e のコマンドの全文) に戻す
+        button.title = summary || launch?.label || "";
+      }
+    },
+  });
   // startSession を待っている間に、残っていたタブが自動で閉じて通知が出ることがある。
   // タブが載る以上、その通知は消す。
   clearEmptyNotice();
@@ -233,6 +261,7 @@ function showTab(tabId: number): boolean {
   });
   syncSearchWithActiveTab();
   syncAiWithActiveTab();
+  syncTabSummaryWithActiveTab();
   return true;
 }
 
@@ -273,6 +302,7 @@ async function closeTab(tabId: number) {
   tab.element.remove();
   tab.button.remove();
   tabs.splice(index, 1);
+  untrackTab(tabId);
 
   const mruIndex = mruOrder.indexOf(tabId);
   if (mruIndex !== -1) {
@@ -291,6 +321,8 @@ async function closeTab(tabId: number) {
       activeTabId = null;
       closeSearch();
       closeAi();
+      // 閉じたタブの要約がバーに残らないように
+      syncTabSummaryWithActiveTab();
     }
   }
 
@@ -645,6 +677,7 @@ export async function initTabs(ui: TabElements, config: AppConfig): Promise<void
   ui.newTabButton.title = `New tab (${shortcutLabel("⌘T", "Ctrl+Shift+T")})`;
   initSearch(ui.terminalsContainer, () => activeTab()?.session);
   initAi(ui.terminalsContainer, config.ai_enabled, () => activeTab()?.session);
+  initTabSummary(config.tab_summary, ui.tabContainer.closest("#tab-bar"), () => activeTabId);
   void initRemoteDrop(ui.terminalsContainer, () => activeTab()?.session);
   document.addEventListener("keydown", handleCycleKeydown, true);
   document.addEventListener("keyup", handleCycleKeyup, true);

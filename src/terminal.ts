@@ -9,6 +9,7 @@ import { Unicode11Addon } from "xterm-addon-unicode11";
 import { enableLinks } from "./links";
 import { IS_WINDOWS } from "./platform";
 import { createSearchAddon } from "./search";
+import type { TabSummaryConfig } from "./tab-summary";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -21,6 +22,8 @@ export interface AppConfig {
   warning: string | null;
   /** Ask AI (Cmd+I) を出すか (ai.ts) */
   ai_enabled: boolean;
+  /** タブ名と要約の自動生成 (tab-summary.ts) */
+  tab_summary: TabSummaryConfig;
 }
 
 export interface Session {
