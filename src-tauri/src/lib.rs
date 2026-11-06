@@ -1,6 +1,8 @@
 mod ai;
 mod cli;
 mod config;
+#[cfg(target_os = "macos")]
+mod objc_exception;
 mod remote_drop;
 mod tab_summary;
 
@@ -1794,6 +1796,10 @@ pub fn run() {
     if let Some(warning) = &loaded_config.warning {
         eprintln!("astragal: {warning}");
     }
+
+    // tao が NSApplication を作る前でもよい (差し替えるのはクラスのメソッド)
+    #[cfg(target_os = "macos")]
+    objc_exception::guard_send_event();
 
     let builder = tauri::Builder::default();
     // 既定のアプリメニューの Hide (Cmd+H) を自前の項目に差し替える (`app_menu`)

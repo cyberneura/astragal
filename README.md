@@ -306,6 +306,15 @@ that way, but a sequence with a wrong size is dropped silently. Images are kept 
 to 64 MB of decoded pixels; older ones are evicted first and leave a placeholder pattern in
 the scrollback.
 
+## Troubleshooting
+
+On macOS, an Objective-C exception that AppKit raises while dispatching an event (a click,
+a key press, a menu) no longer quits Astragal: it is logged and the app keeps running, as in
+other Cocoa apps. Each one is appended to `~/Library/Logs/Astragal/exceptions.log` (name,
+reason and the stack) and also goes to Console.app. Exceptions raised from inside Astragal's
+own native code are not covered and still end the app. If something stops working without the
+app quitting, that file is the place to look and the thing to attach to a bug report.
+
 ## Development
 
 ```shell
