@@ -5,6 +5,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 interface AppInfo {
   name: string;
   version: string;
+  /** ビルド日時 (UTC、"YYYY-MM-DD HH:MM UTC") */
+  build_date: string;
   description: string;
   repository_url: string;
   vendor_name: string;
@@ -29,6 +31,7 @@ function bindExternalLink(anchor: HTMLAnchorElement, url: string): void {
 function render(info: AppInfo): void {
   document.getElementById("about-name")!.textContent = info.name;
   document.getElementById("about-version")!.textContent = `Version ${info.version}`;
+  document.getElementById("about-build-date")!.textContent = info.build_date;
   document.getElementById("about-description")!.textContent = info.description;
   bindExternalLink(
     document.getElementById("about-repository") as HTMLAnchorElement,
