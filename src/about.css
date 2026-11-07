@@ -29,6 +29,13 @@
   color: #9a9a9a;
 }
 
+/* ビルド日時 (UTC)。バージョンの下に小さく */
+#about-build-date {
+  margin-top: 2px;
+  font-size: 12px;
+  color: #7a7a7a;
+}
+
 #about-description {
   margin-top: 14px;
   color: #c8c8c8;

@@ -30,7 +30,7 @@ public リポジトリなので、**README・UI 文字列・エラーメッセ�
 | `src/remote-drop.ts` / `src-tauri/src/remote_drop.rs` | ssh 中のタブへファイルをドロップして scp で送る (ドロップゾーンと確認ダイアログ / ssh の argv の解釈と scp の引数) |
 | `src/search.ts` | Cmd+F の検索バー (xterm-addon-search)。ウインドウに 1 つで、アクティブなタブを検索する |
 | `src/main.ts` / `src/small.ts` | メインウインドウ / 吹き出しの入口 |
-| `src/about.ts` | トレイメニューの About から開くウインドウ |
+| `src/about.ts` | トレイメニューの About から開くウインドウ。バージョンの下にビルド日時 (UTC) を出す (`app_info` の `build_date`) |
 | `src/licenses.ts` | トレイメニューの Third-Party Licenses から開くウインドウ (`THIRD-PARTY-NOTICES.txt` を表示) |
 | `src-tauri/src/objc_exception.rs` / `src-tauri/src/macos/exception_guard.m` | macOS: AppKit がイベント処理中に投げた Objective-C 例外で落ちないように NSApplication の `-sendEvent:` を包む |
 | `resources/app-icons/` | アイコンのマスター素材と `generate.py` / `inspect_icns.py` |
@@ -38,6 +38,17 @@ public リポジトリなので、**README・UI 文字列・エラーメッセ�
 常駐ウインドウは 2 つある。`main` (タブ付き) と `small` (メニューバーアイコン直下に出る
 吹き出し)。挙動が違うので、片方だけ直して済ませないこと。`about` と `licenses` は開くたびに作り、
 閉じると破棄される。
+
+## ビルド日時の表示 (src-tauri/build.rs)
+
+About (トレイメニューのウインドウと、macOS のアプリメニューの標準パネル) にビルド日時 (UTC) を出す
+(CYBERNEURA-DEV-1214。beckwell の CYBERNEURA-DEV-1143 と同じ作り)。`build.rs` が `ASTRAGAL_BUILD_DATE`
+(`YYYY-MM-DD HH:MM UTC`、`SOURCE_DATE_EPOCH` があればそれ) を埋め込み、`lib.rs` の `BUILD_DATE` が読む。
+tauri-build は設定ファイルにしか `rerun-if-changed` を出さないので、存在しないパスの `rerun-if-changed` で
+build.rs を毎回走らせている (ソースだけを変えたビルドで古い日時が残らないように)。
+macOS の標準パネルは "Version <short_version> (<version>)" の 1 行にしか並べられないので、
+`short_version` にバージョン、`version` (括弧の側) にビルド日時を入れる — 既定だと両方に同じ番号が入って
+"Version 0.15.2 (0.15.2)" になっていた。
 
 ## 依存ライブラリのライセンス表示
 

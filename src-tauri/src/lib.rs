@@ -728,9 +728,13 @@ fn app_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     use tauri::menu::{AboutMetadata, PredefinedMenuItem, SubmenuBuilder};
 
     let pkg_info = app.package_info();
+    // macOS の標準パネルは "Version <short_version> (<version>)" と出す。既定では両方に同じ
+    // 番号が入って "Version 0.15.2 (0.15.2)" になり意味が無いので、括弧の側にビルド日時を入れる
+    // (CYBERNEURA-DEV-1214)。パネルはこの 2 つを 1 行にしか並べられない
     let about = AboutMetadata {
         name: Some(pkg_info.name.clone()),
-        version: Some(pkg_info.version.to_string()),
+        short_version: Some(pkg_info.version.to_string()),
+        version: Some(BUILD_DATE.to_string()),
         copyright: app.config().bundle.copyright.clone(),
         authors: app.config().bundle.publisher.clone().map(|p| vec![p]),
         ..Default::default()
@@ -1142,11 +1146,16 @@ fn show_window(app: AppHandle) -> Result<(), String> {
 struct AppInfo {
     name: String,
     version: String,
+    /// ビルド日時 (UTC、"YYYY-MM-DD HH:MM UTC")。build.rs が埋め込む
+    build_date: &'static str,
     description: &'static str,
     repository_url: &'static str,
     vendor_name: &'static str,
     vendor_url: &'static str,
 }
+
+/// ビルド日時 (UTC)。build.rs が `ASTRAGAL_BUILD_DATE` として埋め込む (CYBERNEURA-DEV-1214)
+const BUILD_DATE: &str = env!("ASTRAGAL_BUILD_DATE");
 
 /// About ウインドウに出す情報。version は tauri.conf.json のものが入る。
 #[tauri::command]
@@ -1155,6 +1164,7 @@ fn app_info(app: AppHandle) -> AppInfo {
     AppInfo {
         name: info.name.clone(),
         version: info.version.to_string(),
+        build_date: BUILD_DATE,
         description: "A compact, lightweight terminal app for macOS and Windows. \
             It lives in the menu bar (the notification area on Windows), with a tabbed \
             main window and a small popover terminal that opens from the tray icon.",
