@@ -4,7 +4,7 @@ import type { IDisposable, Terminal } from "xterm";
 // ── タブ名と要約の自動生成 (tab_summary.enabled) ───────────────────────────────
 //
 // 出力のあったタブの末尾の行を Rust (tab_summary.rs) に渡し、LLM に名前と要約を
-// 作らせる。名前はタブのラベルに、要約はツールチップかタブバーの下の 1 行に出す
+// 作らせる。名前はタブのラベルに、要約はツールチップかタブバーの下の 2 行に出す
 // (tab_summary.display)。
 //
 // - 送るのは「出力が止まってから IDLE_MS 経った」タブだけ。出力が流れ続けている間に
@@ -237,6 +237,6 @@ function showInBar(summary: string): void {
   }
   bar.textContent = summary || "No summary yet";
   bar.classList.toggle("empty", summary === "");
-  // 1 行に収まらない分はツールチップで読む
+  // 2 行に収まらない分はツールチップで読む
   bar.title = summary;
 }

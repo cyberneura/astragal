@@ -187,15 +187,18 @@ html, body {
 
 /* ── Tab Summary Bar (tab_summary.display: bar) ───────────────────────────── */
 
-/* タブバーの直下の 1 行。要約の有無で高さを変えない (ターミナルの行数が動くため) */
+/* タブバーの直下の 2 行。要約の長さで高さを変えない (ターミナルの行数が動くため)。
+   上下の padding を付けないこと。line-clamp の 3 行目以降は padding の内側に描かれて見えてしまう */
 #tab-summary-bar {
-  height: 22px;
-  line-height: 22px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  height: 33px; /* 2 行 + border-bottom */
+  line-height: 16px;
   padding: 0 12px;
   flex-shrink: 0;
   overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere; /* 長いパス等でも折り返して ellipsis まで届かせる */
   font-size: 11px;
   color: #9a9a9a;
   background: var(--terminal-background);
