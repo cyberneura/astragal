@@ -189,7 +189,7 @@ ai: # Ask AI (Cmd+I). Off by default
 tab_summary: # Tab names and summaries. Off by default
   enabled: false
   provider: claude-code # claude-code / codex / fm / openai / anthropic
-  display: tooltip # tooltip (hover a tab) or bar (a line under the tab bar)
+  display: tooltip # tooltip (hover a tab) or bar (two lines under the tab bar)
   model: "" # empty uses the provider's default
   command: "" # CLI to run for claude-code / codex / fm; empty uses claude / codex / fm
   api_key: "" # for openai / anthropic
@@ -244,8 +244,9 @@ ai:
 Astragal can name each tab after what you are doing in it ("API server", "cargo test")
 and write a one- or two-sentence summary of its latest state. A name is at most 10
 full-width or 20 half-width characters and differs from the names of the other open tabs
-(a number is added when two would clash). The summary shows as the tab's tooltip, or in a
-line under the tab bar with `display: bar`.
+(a number is added when two would clash). The summary shows as the tab's tooltip, or in
+two lines under the tab bar with `display: bar` (longer text ends in an ellipsis; hover to
+read all of it).
 
 It is off until you turn it on, because it sends what is on the screen to the provider:
 

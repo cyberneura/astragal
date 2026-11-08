@@ -24,7 +24,7 @@ use crate::config::{self, AiConfig, TabSummaryConfig, TabSummaryProvider};
 
 /// タブ名の最大幅 (半角 = 1、全角 = 2 で数える)。全角 10 文字 / 半角 20 文字。
 const TITLE_MAX_WIDTH: usize = 20;
-/// 要約の最大文字数。ツールチップ / 1 行のバーに収まる程度。
+/// 要約の最大文字数。バーでは 2 行を超える分が省略され、全文はツールチップで読む。
 const SUMMARY_MAX_CHARS: usize = 200;
 /// provider へ送るターミナルのテキストの上限 (文字数)。末尾 (新しい側) を残す。
 const CONTENT_MAX_CHARS: usize = 8_000;

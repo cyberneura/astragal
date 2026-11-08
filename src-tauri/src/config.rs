@@ -139,7 +139,7 @@ const CONFIG_TEMPLATE: &str = r##"# Astragal config file
 #   # openai: the OpenAI API (needs api_key or OPENAI_API_KEY)
 #   # anthropic: the Anthropic API (needs api_key, ai.api_key or ANTHROPIC_API_KEY)
 #   provider: claude-code
-#   # Where to show the summary: tooltip (hover a tab) or bar (a line under the tab bar)
+#   # Where to show the summary: tooltip (hover a tab) or bar (two lines under the tab bar)
 #   display: tooltip
 #   # Empty uses the provider's default (claude-code: haiku, openai: gpt-6-luna,
 #   # anthropic: claude-haiku-5-5, codex: the CLI's own default). Not used by fm.
@@ -199,7 +199,7 @@ pub enum TabSummaryProvider {
 pub enum TabSummaryDisplay {
     /// タブにマウスを載せた時のツールチップ
     Tooltip,
-    /// タブバーの下の 1 行
+    /// タブバーの下の 2 行
     Bar,
 }
 
