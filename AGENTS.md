@@ -238,6 +238,9 @@ stream-json / app-server の共通エンジンと Markdown 描画のコピー。
   (commentary / partial_answer を除外し、後続の tool / reasoning で無効化) から取る。
   Enter は送らない。送信時のタブ・入力 revision・通常バッファ・空のプロンプト・表示中の
   ペインを全て確かめる。中断した応答からは書き戻さない
+- 手動入力は完了済み回答のコードブロックごとのアイコンから行う。自動書き戻しと違い
+  入力 revision・空プロンプトは要求しない。表示中の同じタブの通常バッファへ貼り付け、
+  Enter は追加しない。改行・タブを含むブロックは bracketed paste が有効な時だけ許可する
 - CLI の承認方針を緩めない。承認と質問は Beckwell のプロトコルで UI に出す。会話を
   作り直すと process ID を変え、古いプロセスの非同期 callback でも状態を書き換えない
   (await 後にも世代を確認する)。承認・質問の decision は送信前に UI 側で設定する。

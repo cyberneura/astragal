@@ -128,9 +128,12 @@ shell prompt is empty and unchanged since the request. It refuses writeback to
 running commands, exited shells and alternate screens such as vim. It never
 presses Enter. Review the command and press Enter yourself to execute it.
 
-Turn off Auto-paste to use **Paste into terminal** manually. If the terminal has
-changed, copy the code block yourself or submit a fresh request. Stop interrupts
-the agent's response and disables writeback for that response.
+Each code block in a completed AI response has an **Insert into terminal** icon
+next to Copy. It inserts that block at the current terminal cursor without pressing
+Enter, even if you have edited the prompt since sending the message. Multiline
+blocks and tabs require the shell's bracketed paste mode so they remain editable
+input. Terminal control characters are rejected. Stop interrupts the agent's
+response and disables automatic writeback for that response.
 
 ```yaml
 agent_chat:

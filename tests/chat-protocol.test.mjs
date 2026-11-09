@@ -102,7 +102,7 @@ const contextModule = { exports: {} };
 vm.runInNewContext(commonjs(contextSource), { exports: contextModule.exports });
 function paneFixture(invoke) {
   const module = { exports: {} };
-  vm.runInNewContext(commonjs(paneSource + '\nexport const testPane = { start, restart, interrupt, respondPermission, answerQuestion, complete, conversations };'), {
+  vm.runInNewContext(commonjs(paneSource + '\nexport const testPane = { start, restart, interrupt, respondPermission, answerQuestion, complete, insertCode, conversations, select(c) { visible = true; currentSession = () => c.session; } };'), {
     exports: module.exports, queueMicrotask, requestAnimationFrame() {},
     require(name) {
       if (name === '@tauri-apps/api/core') return { invoke };
@@ -117,6 +117,38 @@ function paneFixture(invoke) {
   return { pane, c };
 }
 const settle = () => new Promise(resolve => setImmediate(resolve));
+
+test('manual block input uses the selected terminal despite edits, without an Enter', () => {
+  const { pane, c } = paneFixture(async () => {});
+  const pasted = [];
+  let focused = false;
+  c.session.context = { dirty: true, atPrompt: false, revision: 99, input() { this.revision++; } };
+  c.session.terminal = {
+    buffer: { active: { type: 'normal' } }, modes: { bracketedPasteMode: true }, options: {},
+    paste(text) { pasted.push(text); }, focus() { focused = true; },
+  };
+  pane.select(c);
+  pane.insertCode(c, 'echo one\necho two\n');
+  assert.deepEqual(pasted, ['echo one\necho two']);
+  assert.equal(focused, true);
+  assert.equal(c.revision, null);
+  assert.equal(c.session.context.revision, 100);
+
+  c.session.terminal.options.ignoreBracketedPasteMode = true;
+  pane.insertCode(c, 'echo three\necho four\n');
+  assert.equal(pasted.length, 1);
+  c.session.terminal.buffer.active.type = 'alternate';
+  pane.insertCode(c, 'echo five\n');
+  assert.equal(pasted.length, 1);
+  c.session.terminal.buffer.active.type = 'normal';
+  c.session.exited = true;
+  pane.insertCode(c, 'echo six\n');
+  assert.equal(pasted.length, 1);
+  c.session.exited = false;
+  pane.select({ session: { id: 2 } });
+  pane.insertCode(c, 'echo seven\n');
+  assert.equal(pasted.length, 1);
+});
 function deferred() {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });

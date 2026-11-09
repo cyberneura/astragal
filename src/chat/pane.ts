@@ -7,7 +7,7 @@ import { createProtocol, type ChatAgent } from "./beckwell";
 import type { ChatHost, ChatProtocol, Item, PermissionDecision, PermissionItem, QuestionItem } from "./beckwell/types";
 import { isExternalLink, LINK_ATTRIBUTE, renderMarkdown } from "./beckwell/markdown";
 import { handleCopyClick } from "./beckwell/copy";
-import { chatPrompt, pasteCommand } from "./context";
+import { chatPrompt, pasteCommand, terminalInputText } from "./context";
 import { initChatTooltips } from "./tooltips";
 
 export interface AgentChatConfig {
@@ -56,7 +56,6 @@ let autoPaste: HTMLInputElement;
 let cwd: HTMLInputElement;
 let followDirectory: HTMLInputElement;
 let followLabel: HTMLLabelElement;
-let action: HTMLButtonElement;
 let visible = false;
 let resizing = false;
 let generation = 0;
@@ -171,7 +170,6 @@ export async function initAgentChat(appConfig: AppConfig, getSession: () => Sess
     if (href && isExternalLink(href)) { event.preventDefault(); void openUrl(href).catch((e) => { const c = active(); if (c) note(c, String(e), true); }); }
   });
   status = el("div", "chat-status"); status.setAttribute("role", "status");
-  action = button("Paste into terminal", "chat-paste", () => { const c = active(); if (c) paste(c); }); action.hidden = true;
   const form = el("form", "chat-composer");
   input = el("textarea", "chat-input"); input.placeholder = "Ask about this terminal…"; input.rows = 3;
   input.setAttribute("aria-label", "Message to agent"); input.dataset.annotate = "chat-input";
@@ -199,7 +197,7 @@ export async function initAgentChat(appConfig: AppConfig, getSession: () => Sess
   form.append(input, controls); form.addEventListener("submit", (e) => { e.preventDefault(); void submit(); });
   contextRow.append(sharing, turnsLabel);
   header.append(title, location, contextRow);
-  pane.append(header, log, action, form);
+  pane.append(header, log, form);
   initChatTooltips([pane, toggle]);
   // Chat's text editing shortcuts must not resize, clear, or close terminal tabs.
   pane.addEventListener("keydown", (e) => e.stopPropagation());
@@ -367,7 +365,8 @@ function paste(c: Conversation): void {
   if (!c.command) return;
   if (!visible || active() !== c || session.exited || session.terminal.buffer.active.type !== "normal"
       || !session.context.atPrompt || session.context.dirty || session.context.revision !== c.revision) {
-    note(c, "The terminal changed or is not at an empty shell prompt. Copy the command manually or send a new request.", true);
+    c.command = null; c.revision = null;
+    note(c, "Auto-paste skipped because the terminal changed. Use the code block's Insert into terminal button when ready.");
     return;
   }
   const command = c.command; c.command = null; c.revision = null;
@@ -375,6 +374,23 @@ function paste(c: Conversation): void {
   session.context.input();
   session.terminal.paste(command);
   note(c, "Command pasted into the terminal. Review it and press Enter to run.");
+}
+
+function insertCode(c: Conversation, text: string): void {
+  const { session } = c;
+  if (!visible || active() !== c || session.exited || session.terminal.buffer.active.type !== "normal") {
+    note(c, "Return to this terminal's normal screen before inserting code.", true);
+    return;
+  }
+  const bracketed = session.terminal.modes.bracketedPasteMode && !session.terminal.options.ignoreBracketedPasteMode;
+  const result = terminalInputText(text, bracketed);
+  if (result.error) { note(c, result.error, true); return; }
+  if (!result.text) return;
+  c.command = null; c.revision = null;
+  session.userInteracted = true;
+  session.context.input();
+  session.terminal.paste(result.text);
+  session.terminal.focus();
 }
 
 // Only update the next turn. A running agent keeps the directory it started with.
@@ -420,7 +436,6 @@ function render(): void {
   cwd.disabled = !c || c.starting || c.followDirectory;
   followDirectory.disabled = !c || c.starting || !c.protocol?.supportsWorkingDirectory;
   input.disabled = !c;
-  action.hidden = !c?.command;
   if (!c) { status.textContent = "Open a terminal tab to start a chat."; return; }
   syncDirectory(c);
   renderDirectory(c);
@@ -443,6 +458,15 @@ function renderItem(c: Conversation, item: Item, node: HTMLElement): void {
   if (item.kind === "user" || item.kind === "text") {
     node.append(el("div", "chat-role", item.kind === "user" ? "You" : c.provider === "claude" ? "Claude" : "Codex"));
     const body = el("div", "chat-markdown"); body.innerHTML = renderMarkdown(item.text); node.append(body);
+    if (item.kind === "text" && !item.streaming) {
+      for (const block of body.querySelectorAll<HTMLElement>(".code-block")) {
+        const pre = block.querySelector(":scope > pre");
+        if (!pre) continue;
+        const insert = iconButton("Insert into terminal (without Enter)", "terminal", "chat-insert-code", () => insertCode(c, pre.textContent ?? ""));
+        insert.classList.add("terminal-code");
+        block.append(insert);
+      }
+    }
   } else if (item.kind === "thinking" || item.kind === "tool_use") {
     const details = el("details", ""); details.open = expanded;
     const title = item.kind === "thinking" ? "Thinking" : `${item.name}${item.isError ? " · failed" : item.result === null ? " · running" : ""}`;
