@@ -714,7 +714,13 @@ fn dock_follows(win: &WebviewWindow, main_shown: bool) {
 #[cfg(target_os = "macos")]
 const APP_MENU_HIDE_ID: &str = "app_hide";
 
-/// Tauri の既定のアプリメニュー (`Menu::default`) と同じ構成で、Hide だけを自前の項目に
+/// アプリメニューの About 項目の id (`app_menu`)。トレイメニューの "about" と分けてあるのは、
+/// `TrayIconBuilder::on_menu_event` がアプリ全体のメニューイベントも受けるため
+/// (同じ id だと 1 回の選択を両方のハンドラが処理する)。
+#[cfg(target_os = "macos")]
+const APP_MENU_ABOUT_ID: &str = "app_about";
+
+/// Tauri の既定のアプリメニュー (`Menu::default`) と同じ構成で、Hide と About を自前の項目に
 /// 差し替えたもの (macOS のみ)。
 ///
 /// 既定の Hide (`PredefinedMenuItem::hide`) は AppKit の `hide:` を直接呼ぶので、
@@ -725,25 +731,19 @@ const APP_MENU_HIDE_ID: &str = "app_hide";
 /// 拾えない (Dock アイコンが残るだけで、クリックすれば Reopen で main が出る)。
 #[cfg(target_os = "macos")]
 fn app_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
-    use tauri::menu::{AboutMetadata, PredefinedMenuItem, SubmenuBuilder};
+    use tauri::menu::{PredefinedMenuItem, SubmenuBuilder};
 
     let pkg_info = app.package_info();
-    // macOS の標準パネルは "Version <short_version> (<version>)" と出す。既定では両方に同じ
-    // 番号が入って "Version 0.15.2 (0.15.2)" になり意味が無いので、括弧の側にビルド日時を入れる
-    // (CYBERNEURA-DEV-1214)。パネルはこの 2 つを 1 行にしか並べられない
-    let about = AboutMetadata {
-        name: Some(pkg_info.name.clone()),
-        short_version: Some(pkg_info.version.to_string()),
-        version: Some(BUILD_DATE.to_string()),
-        copyright: app.config().bundle.copyright.clone(),
-        authors: app.config().bundle.publisher.clone().map(|p| vec![p]),
-        ..Default::default()
-    };
+    // 標準の About パネルは使わず、トレイと同じ About ウインドウを開く (CYBERNEURA-DEV-1214)。
+    // 標準パネルのバージョン行は "Version <ApplicationVersion> (<Version>)" の 1 行で、
+    // ビルド日時を「バージョンの下の行」に出す指定ができない
+    let about = MenuItemBuilder::with_id(APP_MENU_ABOUT_ID, format!("About {}", pkg_info.name))
+        .build(app)?;
     let hide = MenuItemBuilder::with_id(APP_MENU_HIDE_ID, format!("Hide {}", pkg_info.name))
         .accelerator("Cmd+H")
         .build(app)?;
     let app_submenu = SubmenuBuilder::new(app, pkg_info.name.clone())
-        .item(&PredefinedMenuItem::about(app, None, Some(about))?)
+        .item(&about)
         .separator()
         .item(&PredefinedMenuItem::services(app, None)?)
         .separator()
@@ -1812,13 +1812,19 @@ pub fn run() {
     objc_exception::guard_send_event();
 
     let builder = tauri::Builder::default();
-    // 既定のアプリメニューの Hide (Cmd+H) を自前の項目に差し替える (`app_menu`)
+    // 既定のアプリメニューの Hide (Cmd+H) と About を自前の項目に差し替える (`app_menu`)
     #[cfg(target_os = "macos")]
-    let builder = builder.menu(app_menu).on_menu_event(|app, event| {
-        if event.id.as_ref() == APP_MENU_HIDE_ID {
-            hide_all_windows(app);
-        }
-    });
+    let builder = builder
+        .menu(app_menu)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            APP_MENU_HIDE_ID => hide_all_windows(app),
+            APP_MENU_ABOUT_ID => {
+                if let Err(e) = show_about_window(app) {
+                    eprintln!("astragal: failed to show the about window: {e}");
+                }
+            }
+            _ => {}
+        });
     builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())

@@ -41,14 +41,15 @@ public リポジトリなので、**README・UI 文字列・エラーメッセ�
 
 ## ビルド日時の表示 (src-tauri/build.rs)
 
-About (トレイメニューのウインドウと、macOS のアプリメニューの標準パネル) にビルド日時 (UTC) を出す
+About ウインドウのバージョンの下の行にビルド日時 (UTC) を出す
 (CYBERNEURA-DEV-1214。beckwell の CYBERNEURA-DEV-1143 と同じ作り)。`build.rs` が `ASTRAGAL_BUILD_DATE`
 (`YYYY-MM-DD HH:MM UTC`、`SOURCE_DATE_EPOCH` があればそれ) を埋め込み、`lib.rs` の `BUILD_DATE` が読む。
 tauri-build は設定ファイルにしか `rerun-if-changed` を出さないので、存在しないパスの `rerun-if-changed` で
 build.rs を毎回走らせている (ソースだけを変えたビルドで古い日時が残らないように)。
-macOS の標準パネルは "Version <short_version> (<version>)" の 1 行にしか並べられないので、
-`short_version` にバージョン、`version` (括弧の側) にビルド日時を入れる — 既定だと両方に同じ番号が入って
-"Version 0.15.2 (0.15.2)" になっていた。
+macOS のアプリメニューの About も標準パネルではなく、トレイと同じ About ウインドウを開く (`APP_MENU_ABOUT_ID`)。
+標準パネルのバージョン行は "Version <ApplicationVersion> (<Version>)" の 1 行で、muda の `AboutMetadata` は
+`version` を括弧の外 (ApplicationVersion)、`short_version` を括弧の中 (Version) に渡す。
+「バージョンの下の行にビルド日時」を指定する項目が無いので、標準パネルには戻さない。
 
 ## 依存ライブラリのライセンス表示
 
