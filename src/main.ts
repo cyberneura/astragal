@@ -1,5 +1,6 @@
 import { applyTerminalBackground, loadConfig, showStartupError } from "./terminal";
-import { initTabs } from "./tabs";
+import { initAgentChat } from "./chat/pane";
+import { getActiveSession, initTabs } from "./tabs";
 import { applyPlatformClass } from "./platform";
 
 applyPlatformClass();
@@ -18,6 +19,7 @@ window.addEventListener("load", async () => {
       },
       config,
     );
+    await initAgentChat(config, getActiveSession);
   } catch (e) {
     showStartupError(terminalsContainer, e);
   }

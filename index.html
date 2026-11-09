@@ -10,14 +10,20 @@
 
   <body>
     <main id="app">
-      <header id="tab-bar" data-tauri-drag-region>
-        <div id="traffic-light-space" data-tauri-drag-region></div>
-        <div id="app-title" data-tauri-drag-region>Astragal</div>
-        <div id="tabs" role="tablist"></div>
-        <div id="drag-space" data-tauri-drag-region></div>
-        <button id="new-tab" type="button" title="New tab (⌘T)" aria-label="New tab">+</button>
-      </header>
-      <section id="terminals" aria-label="Terminal sessions"></section>
+      <div id="workspace">
+        <div id="terminal-pane">
+          <header id="tab-bar" data-tauri-drag-region>
+            <div id="traffic-light-space" data-tauri-drag-region></div>
+            <div id="app-title" data-tauri-drag-region>Astragal</div>
+            <div id="tabs" role="tablist"></div>
+            <div id="drag-space" data-tauri-drag-region></div>
+            <button id="new-tab" type="button" title="New tab (⌘T)" aria-label="New tab">+</button>
+            <button id="chat-toggle" type="button" data-annotate="chat-toggle" aria-label="Toggle agent chat" aria-expanded="false" aria-controls="agent-chat" hidden></button>
+          </header>
+          <section id="terminals" aria-label="Terminal sessions"></section>
+        </div>
+        <aside id="agent-chat" aria-label="Agent chat" hidden></aside>
+      </div>
     </main>
   </body>
 </html>

@@ -46,6 +46,104 @@ Website: https://www.cyberneura.com/app/astragal
   See [Command line](#command-line)
 - Configuration through `~/.config/astragal/config.yaml`
 
+## Agent chat
+
+Click **Chat** in the main window to open an agent pane on the right. The window
+widens to 150% where screen space permits, with terminal and chat widths in a 2:1
+ratio. The chat uses the full window height; the tab bar and terminal summary stay
+in the left pane. Closing the pane restores the width; maximized and fullscreen
+windows keep their size. The menu-bar popover does not include chat.
+
+Choose **Claude Code** or **Codex**. Install the CLI and sign in with its normal
+subscription login first. Astragal uses Beckwell's stream-json / app-server chat
+engine, so replies appear as chat messages, Markdown, tool activity and approval
+cards, not as a CLI terminal. No API key is required by Astragal. Your CLI account,
+configuration and plan limits determine authentication and billing; a CLI
+configured for API billing will continue to use it. Reported dollar amounts are
+CLI estimates, not necessarily subscription charges.
+
+Press **Command+Enter** to send a message (**Ctrl+Enter** on Windows), or click
+**Send**. Enter inserts a newline. The keyboard shortcut is inactive during IME
+composition, including Japanese conversion.
+Chat controls use icons: a speech bubble for chat, a paper plane for Send, a square
+for Stop, a link for Follow, a history clock for Turns, and a terminal for
+Auto-paste. Hover over each control for a quick tooltip, or focus it with the
+keyboard. Accessible labels retain the control names.
+
+Each terminal tab has its own conversation and agent process. The agent starts
+when its chat is first opened. The directory is taken from the local shell's
+notification when available, otherwise your home directory; edit the path below
+the provider to choose another project. Changing provider, manually editing the
+path, or clicking **+** (New chat) stops the previous process and starts a new
+conversation. Closing the
+pane retains the conversation and running process; closing the terminal tab or
+quitting Astragal stops the process. Remote SSH terminals do not start a remote
+agent: the agent always runs locally.
+
+With **Codex**, enable **Follow** beside the path to follow this terminal tab's
+directory without losing the conversation. Each new message uses the latest
+local directory reported by the shell; work already running keeps its original
+directory. Follow is off by default for each tab. Turn it off to keep the displayed
+directory fixed. This requires local OSC 7 directory notifications (included in
+Astragal's zsh integration); if the directory is unknown or reported as remote,
+messages wait until a local directory is available or Follow is turned off.
+Claude Code uses a fixed launch directory, so its Follow switch is disabled.
+
+### Terminal context and privacy
+
+Submitting a message shares the last **3 completed command turns** (command plus
+output) by default. Change **Turns** in the toolbar (0–20; 0 disables new terminal
+sharing). Expand the context preview to inspect exactly the terminal text that
+will be included. Opening the pane alone sends no terminal text. Incomplete
+commands and output before shell integration starts are not shared.
+
+A turn containing any built-in blacklist substring is excluded in full,
+case-insensitively: `password`, `passwd`, `token`, `apikey`, `api_key`, `api-key`,
+`secret_`, `private key`, `private_key`, or `authorization:`. Matching ignores ANSI
+formatting and normalizes Unicode compatibility characters. Additional entries
+extend this list. Excluded turns are not replaced with older turns. Very large turns
+are also excluded, rather than partially shared. At most 20 completed turns are held in memory per terminal.
+
+This is a substring filter, not a secret detector: an unlabelled secret can still
+be shared. It filters the terminal context Astragal attaches, not the agent's
+independent file and tool access. CLI tools use their normal permissions and
+configuration; approve access accordingly. Reducing Turns cannot retract text
+already sent to a conversation. Use New chat to begin with fresh agent context;
+provider-managed session logs and retention follow the CLI's settings.
+
+Interactive **zsh** gets OSC 133 command boundaries automatically through temporary
+startup wrappers; your dotfiles are sourced and never edited. Shells already
+emitting OSC 133 A/C/D boundaries also work. Without these boundaries (including
+most bash/fish/PowerShell configurations, `zsh -f`, and direct `astragal -e`
+commands), the pane reports that no shell integration is available and sends no
+terminal turns. Chat itself remains available. A local `ssh` invocation is one
+turn until it exits unless the remote shell emits its own boundaries.
+
+### Writing commands back
+
+The agent can propose a command using a single-line `astragal-terminal` fenced
+block. With **Auto-paste** enabled, Astragal places that command into the original
+terminal only if the chat is visible, the original tab is still selected, and the
+shell prompt is empty and unchanged since the request. It refuses writeback to
+running commands, exited shells and alternate screens such as vim. It never
+presses Enter. Review the command and press Enter yourself to execute it.
+
+Turn off Auto-paste to use **Paste into terminal** manually. If the terminal has
+changed, copy the code block yourself or submit a fresh request. Stop interrupts
+the agent's response and disables writeback for that response.
+
+```yaml
+agent_chat:
+  enabled: true
+  provider: claude           # claude or codex
+  context_turns: 3           # 0–20; toolbar changes last for this tab
+  blacklist: ["internal_id", "credential"]
+  auto_paste: true           # paste only; never execute
+```
+
+The vendored source and update procedure are documented in
+[Beckwell chat engine](docs/beckwell-chat.md).
+
 ## Install
 
 ### macOS

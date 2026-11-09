@@ -1,0 +1,11 @@
+<!doctype html><html lang="en"><head><meta charset="UTF-8"><link rel="stylesheet" href="/src/styles.css"><title>Agent chat harness</title></head>
+<body><main id="app"><div id="workspace"><div id="terminal-pane"><header id="tab-bar"><div id="app-title">Astragal</div><button id="chat-toggle" data-annotate="chat-toggle" hidden>Chat</button><button id="other-tab" data-annotate="other-tab">Switch terminal</button></header><div id="tab-summary-bar"><span class="tab-summary-text">Build completed. One file changed.</span></div><section id="terminals"><pre style="padding: 18px; color: #c8d5e5">$ pnpm build
+Build completed successfully.
+
+$ echo $API_KEY
+[example omitted from chat]
+
+$ git status --short
+ M src/main.ts
+
+$ <span id="pasted"></span></pre></section></div><aside id="agent-chat" hidden></aside></div></main><script type="module" src="./chat-harness.ts"></script></body></html>

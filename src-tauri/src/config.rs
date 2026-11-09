@@ -152,6 +152,15 @@ const CONFIG_TEMPLATE: &str = r##"# Astragal config file
 #   # The shortest time between two updates of the same tab (seconds, at least 15).
 #   interval_seconds: 120
 
+# Agent chat (main window only). Opens Claude Code / Codex using your CLI login.
+# Nothing is sent until you submit a chat message.
+# agent_chat:
+#   enabled: true
+#   provider: claude  # claude or codex
+#   context_turns: 3  # 0-20 completed commands, adjustable in the toolbar
+#   blacklist: []    # Additional case-insensitive substrings; matching turns are omitted
+#   auto_paste: true # Paste an agent's suggested command; never press Enter
+
 # config_override_command runs a command whose stdout must be YAML, and merges
 # that YAML over this file. Mappings are merged recursively; scalars and lists
 # are replaced wholesale.
@@ -176,6 +185,35 @@ pub struct Config {
     pub theme: BTreeMap<String, String>,
     pub ai: AiConfig,
     pub tab_summary: TabSummaryConfig,
+    pub agent_chat: AgentChatConfig,
+}
+
+/// Main-window agent chat. Additional blacklist entries never replace built-ins.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentChatConfig {
+    pub enabled: bool,
+    pub provider: ChatProvider,
+    pub context_turns: usize,
+    pub blacklist: Vec<String>,
+    pub auto_paste: bool,
+}
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChatProvider {
+    Claude,
+    Codex,
+}
+impl Default for AgentChatConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            provider: ChatProvider::Claude,
+            context_turns: 3,
+            blacklist: Vec::new(),
+            auto_paste: true,
+        }
+    }
 }
 
 /// タブ名と要約の生成元。

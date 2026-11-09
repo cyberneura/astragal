@@ -26,3 +26,5 @@ dist-ssr
 # アイコンの補助スクリプト (resources/app-icons/) を動かすと出る
 __pycache__/
 
+
+.pnpm-store/

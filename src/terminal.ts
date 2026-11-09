@@ -1,3 +1,5 @@
+import { TerminalContext } from "./chat/context";
+import type { AgentChatConfig } from "./chat/pane";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Terminal } from "xterm";
@@ -24,10 +26,13 @@ export interface AppConfig {
   ai_enabled: boolean;
   /** タブ名と要約の自動生成 (tab-summary.ts) */
   tab_summary: TabSummaryConfig;
+  agent_chat: AgentChatConfig;
+  home_directory: string;
 }
 
 export interface Session {
   id: number;
+  context: TerminalContext;
   terminal: Terminal;
   fitAddon: FitAddon;
   /** Cmd+F の検索。検索バー (search.ts) から使う */
@@ -164,7 +169,9 @@ async function registerPtyEvents(): Promise<void> {
     if (session) {
       // pty の読み出し境界でマルチバイト文字が分断されるので、文字列では
       // なくバイト列で渡す (xterm 内蔵の UTF-8 デコーダが跨いで処理する)。
-      session.terminal.write(decodeBase64(payload.data));
+      const bytes = decodeBase64(payload.data);
+      session.context.feed(bytes);
+      session.terminal.write(bytes);
       return;
     }
     if (closedSessions.has(payload.tab_id)) {
@@ -237,6 +244,7 @@ export async function startSession(
   const id = await invoke<number>("create_terminal", { launch: launch ?? null });
   const session: Session = {
     id,
+    context: new TerminalContext(),
     terminal,
     fitAddon,
     search,
@@ -250,14 +258,14 @@ export async function startSession(
   const queued = pendingOutput.get(id);
   if (queued) {
     pendingOutput.delete(id);
-    queued.forEach((bytes) => terminal.write(bytes));
+    queued.forEach((bytes) => { session.context.feed(bytes); terminal.write(bytes); });
   }
   // 出力を流し切ってから終了を出す (順序が入れ替わらないように)
   if (pendingExit.delete(id)) {
     handleExit(session);
   }
 
-  terminal.onData((data) => writeStdin(id, new TextEncoder().encode(data)));
+  terminal.onData((data) => { session.context.input(); writeStdin(id, new TextEncoder().encode(data)); });
   terminal.onBinary((data) => writeStdin(id, binaryStringToBytes(data)));
 
   // 「ユーザーが使ったタブか」を覚える。onData では代用できない。rc ファイルが投げる
