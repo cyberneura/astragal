@@ -1,3 +1,4 @@
+import { closeAgentChat, syncAgentChat } from "./chat/pane";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
@@ -261,6 +262,7 @@ function showTab(tabId: number): boolean {
   });
   syncSearchWithActiveTab();
   syncAiWithActiveTab();
+  syncAgentChat();
   syncTabSummaryWithActiveTab();
   return true;
 }
@@ -292,6 +294,8 @@ function fitLater(tab: TerminalTab, focus = false): void {
 }
 
 async function closeTab(tabId: number) {
+  const closing = tabs.find((tab) => tab.session.id === tabId);
+  if (closing) closeAgentChat(closing.session);
   const index = tabs.findIndex((tab) => tab.session.id === tabId);
   if (index === -1) {
     return;
@@ -470,6 +474,7 @@ function commitCycle(): void {
  * シェルの補完が動いてしまう。capture で拾って伝播ごと止める。
  */
 function handleCycleKeydown(e: KeyboardEvent): void {
+  if (e.target instanceof Element && e.target.closest("#agent-chat")) return;
   if (e.key !== "Tab" || !e.ctrlKey || e.metaKey || e.altKey) {
     return;
   }
@@ -531,6 +536,7 @@ function copySelection(): boolean {
  * Shift を押しているので `key` は配列ごとに違う記号になるため。
  */
 function handleWindowsKeydown(e: KeyboardEvent): void {
+  if (e.target instanceof Element && e.target.closest("#agent-chat")) return;
   if (e.altKey || e.metaKey) {
     return;
   }
@@ -734,3 +740,5 @@ export async function initTabs(ui: TabElements, config: AppConfig): Promise<void
     writeConfigWarning(tab.session, config);
   }
 }
+
+export function getActiveSession(): Session | undefined { return activeTab()?.session; }

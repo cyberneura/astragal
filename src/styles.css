@@ -4,6 +4,8 @@
    move do nothing and macOS anchors the IME candidate window at the top-left of the window
    instead of at the cursor. */
 @import "xterm/css/xterm.css";
+@import "@vscode/codicons/dist/codicon.css";
+@import "./chat/pane.css";
 
 /* ── Reset & Base ─────────────────────────────────────────────────────────── */
 
@@ -187,12 +189,10 @@ html, body {
 
 /* ── Tab Summary Bar (tab_summary.display: bar) ───────────────────────────── */
 
-/* タブバーの直下の 2 行。要約の長さで高さを変えない (ターミナルの行数が動くため)。
-   上下の padding を付けないこと。line-clamp の 3 行目以降は padding の内側に描かれて見えてしまう */
+/* タブバーの直下の 2 行。要約の長さで高さを変えず、内側のテキストを天地中央に置く。 */
 #tab-summary-bar {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  display: flex;
+  align-items: center;
   height: 33px; /* 2 行 + border-bottom */
   line-height: 16px;
   padding: 0 12px;
@@ -203,6 +203,16 @@ html, body {
   color: #9a9a9a;
   background: var(--terminal-background);
   border-bottom: 1px solid #2a2a2a;
+}
+
+#tab-summary-bar > .tab-summary-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  /* 上下の padding は付けない。省略した 3 行目が padding 内に描かれるため。 */
 }
 
 #tab-summary-bar.empty {

@@ -210,6 +210,43 @@ Warp の自然言語コマンド入力に相当する機能。設計上の不変
 - 既定モデルは `claude-opus-5` + `effort: low`。モデルを変える時、Haiku 4.5 のように
   effort を受け付けないモデルは `effort: ""` が要る (送ると 400)
 
+## Agent chat (main の右ペイン)
+
+`src/chat/pane.ts` が UI とタブごとの会話を持ち、`src/chat/beckwell/` は Beckwell の
+stream-json / app-server の共通エンジンと Markdown 描画のコピー。移植元の revision と
+差分は `docs/beckwell-chat.md`。Rust の `agent_process.rs` は子プロセスと JSON 行の中継、
+`chat_window.rs` は幅の拡張と復元。small には作らない。
+
+- `#workspace` の左 `#terminal-pane` にタブバー・サマリー・ターミナルを収め、右のチャットは
+  ウインドウ上端から使う。チャットのヘッダーは provider / path / context のコンパクトな 3 行
+- Follow はタブごとに既定 OFF。Codex の `turn/start.cwd` で次の送信時にローカル OSC 7 の cwd を
+  渡し、thread は維持する。実行中は変更しない。OFF では表示中の cwd を固定する。
+  remote の OSC 7 は cwd を不明に戻し、追従中に不明なら送信を止める。
+  Claude は実行中の cwd 変更をサポートしていないためスイッチを無効にする
+
+- `agent_chat` の既定は有効だが、開いただけではターミナル出力を送らない。送信のたびに
+  `TerminalContext.snapshot` で最後の完了済み N ターンを選び、その後にブラックリストで
+  ターン全体を除外する。除外分を古いターンで補充しない。設定の blacklist は追加分だけ
+- `shell_integration.rs` は main の対話 zsh に一時 ZDOTDIR を渡し、ユーザーの dotfile を
+  読んでから OSC 133 の A/C/D と OSC 7 の cwd を出す。元の dotfile は編集しない。
+  境界が分からないシェルでは履歴を推測して送らない。`-e` は対象外
+- 生出力を分割 UTF-8 / OSC の境界を跨いで読む。未完了ターンと 131,072 UTF-16 code units を超えるターンを
+  送らない。保持は最大 20 ターン。これは Astragal の添付範囲の制限であり、エージェントの
+  独立したファイルアクセスのサンドボックスではない
+- 書き戻しは最終応答の `astragal-terminal` コードブロック 1 個、単一行だけ。
+  `result.finalText` だけを使う。Claude は result の本文、Codex は最後の完了済み回答
+  (commentary / partial_answer を除外し、後続の tool / reasoning で無効化) から取る。
+  Enter は送らない。送信時のタブ・入力 revision・通常バッファ・空のプロンプト・表示中の
+  ペインを全て確かめる。中断した応答からは書き戻さない
+- CLI の承認方針を緩めない。承認と質問は Beckwell のプロトコルで UI に出す。会話を
+  作り直すと process ID を変え、古いプロセスの非同期 callback でも状態を書き換えない
+  (await 後にも世代を確認する)。承認・質問の decision は送信前に UI 側で設定する。
+  プロトコルは送信失敗時に pending へ戻すだけなので、UI 側での二重送信防止が必要
+- pane を閉じてもプロセスは残す。タブを閉じる・New chat・アプリ終了・フロントの
+  再初期化で終了させる。SIGTERM の後に期限付き SIGKILL へ進む
+- `pnpm test:chat` は共有範囲と書き戻しのテスト。`tests/agent-smoke.mjs` は実 CLI に合成の
+  接続確認だけを送る任意テスト。ネットワークと通常の資格情報へのアクセスが必要
+
 ## タブ名と要約 (CYBERNEURA-DEV-1197)
 
 出力のあったタブの末尾 120 行を LLM に渡し、タブ名 (全角 10 / 半角 20 文字) と 1〜2 文の要約を

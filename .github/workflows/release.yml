@@ -178,6 +178,9 @@ jobs:
       - name: Build frontend
         run: pnpm build
 
+      - name: Test agent chat context and writeback
+        run: pnpm test:chat
+
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 

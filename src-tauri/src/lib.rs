@@ -1,9 +1,12 @@
+mod agent_process;
 mod ai;
+mod chat_window;
 mod cli;
 mod config;
 #[cfg(target_os = "macos")]
 mod objc_exception;
 mod remote_drop;
+mod shell_integration;
 mod tab_summary;
 
 use base64::Engine;
@@ -28,6 +31,7 @@ struct PtySession {
     master: Box<dyn MasterPty + Send>,
     writer: Mutex<Box<dyn Write + Send>>,
     _child: Box<dyn ChildKiller + Send>,
+    _integration: Option<shell_integration::Integration>,
 }
 
 struct AppState {
@@ -122,6 +126,8 @@ struct FrontendConfig {
     ai_enabled: bool,
     /// タブ名と要約の自動生成。provider と API キーは webview に渡さない
     tab_summary: FrontendTabSummary,
+    agent_chat: config::AgentChatConfig,
+    home_directory: String,
 }
 
 #[derive(Serialize)]
@@ -150,6 +156,8 @@ fn get_config(app: AppHandle) -> FrontendConfig {
         config_path: loaded.path.display().to_string(),
         warning: (!warnings.is_empty()).then(|| warnings.join("\n")),
         ai_enabled: loaded.config.ai.enabled,
+        agent_chat: loaded.config.agent_chat.clone(),
+        home_directory: dirs::home_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
         tab_summary: FrontendTabSummary {
             enabled: loaded.config.tab_summary.enabled,
             display: loaded.config.tab_summary.display,
@@ -339,7 +347,15 @@ fn create_terminal(app: AppHandle, window: WebviewWindow, launch: Option<u32>) -
         })
         .map_err(|e| format!("Failed to open pty: {}", e))?;
 
-    let cmd = shell_command(&app_state.config.config.shell, launch.as_ref());
+    let mut cmd = shell_command(&app_state.config.config.shell, launch.as_ref());
+    let integration = if window.label() == "main"
+        && app_state.config.config.agent_chat.enabled
+        && launch.as_ref().and_then(|l| l.exec.as_ref()).is_none()
+    {
+        shell_integration::install(&mut cmd, &app_state.config.config.shell)?
+    } else {
+        None
+    };
     let child = pair
         .slave
         .spawn_command(cmd)
@@ -426,6 +442,7 @@ fn create_terminal(app: AppHandle, window: WebviewWindow, launch: Option<u32>) -
         master: pair.master,
         writer: Mutex::new(writer),
         _child: child,
+        _integration: integration,
     };
 
     if (tab_id as usize) < sessions.len() {
@@ -1856,6 +1873,8 @@ pub fn run() {
                 let _ = present_window(&win);
             }
         }))
+        .manage(agent_process::AgentState::default())
+        .manage(chat_window::ChatWindowState::default())
         .manage(AppState {
             sessions: Mutex::new(Vec::new()),
             next_tab_id: Mutex::new(0),
@@ -1939,6 +1958,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_config,
+            agent_process::agent_reset,
+            agent_process::agent_start,
+            agent_process::agent_write,
+            agent_process::agent_stop,
+            chat_window::set_chat_open,
             ai_suggest_command,
             tab_summary_generate,
             app_info,
@@ -1961,6 +1985,9 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                agent_process::stop_all_and_wait(app);
+            }
             // Dock アイコンのクリック (と、起動済みの .app を Finder から開き直した時)。
             // Dock に出ているのは main の表示中だけだが、他アプリの背後にあれば前に出す
             #[cfg(target_os = "macos")]

@@ -235,7 +235,10 @@ function showInBar(summary: string): void {
   if (!bar) {
     return;
   }
-  bar.textContent = summary || "No summary yet";
+  const text = document.createElement("span");
+  text.className = "tab-summary-text";
+  text.textContent = summary || "No summary yet";
+  bar.replaceChildren(text);
   bar.classList.toggle("empty", summary === "");
   // 2 行に収まらない分はツールチップで読む
   bar.title = summary;
