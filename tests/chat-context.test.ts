@@ -1,9 +1,19 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { TerminalContext, containsSecret, pasteCommand, chatPrompt } from "../src/chat/context.ts";
+import { TerminalContext, containsSecret, pasteCommand, chatPrompt, terminalInputText } from "../src/chat/context.ts";
 const encode = (s: string) => new TextEncoder().encode(s);
 const osc = (s: string) => `\x1b]133;${s}\x07`;
 const turn = (text: string) => `${osc("A")}$ command\r\n${osc("C")}${text}${osc("D;0")}`;
+
+test("manual code input removes the renderer newline and protects against execution controls", () => {
+  assert.deepEqual(terminalInputText("echo hello\n", false), { text: "echo hello" });
+  assert.deepEqual(terminalInputText("first\r\n\tsecond\r\n", true), { text: "first\n\tsecond" });
+  assert.ok(terminalInputText("first\nsecond\n", false).error);
+  assert.ok(terminalInputText("\tindented\n", false).error);
+  for (const control of ["\x1b[201~", "\x00", "\x03", "\x7f", "\u2028"]) {
+    assert.ok(terminalInputText(`echo ${control}\n`, true).error);
+  }
+});
 
 test("last N completed turns are filtered as whole turns without backfilling", () => {
   const context = new TerminalContext();

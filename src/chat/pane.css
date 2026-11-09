@@ -83,6 +83,8 @@
 .chat-markdown .copy-code:hover { background: #354358; }
 .chat-markdown .copy-code::after { content: "\ebcc"; font: normal normal normal 14px/1 codicon; }
 .chat-markdown .copy-code.copied::after { content: "\eab2"; color: #a7d8b3; }
+#agent-chat .chat-markdown .terminal-code { position: absolute; top: 1px; right: 32px; width: 24px; height: 22px; border: 0; border-radius: 3px; color: #ced9e6; }
+#agent-chat .chat-markdown .terminal-code:hover { background: #354358; }
 .chat-thinking, .chat-tool_use, .chat-result, .chat-note { color: #a6b0bd; font-size: 11px; }
 .chat-result, .chat-note { padding: 2px 0; }
 .chat-result small { font-size: 10px; color: #8798ad; }
@@ -97,6 +99,5 @@
 .chat-input { resize: vertical; min-height: 64px; max-height: 180px; width: 100%; background: #101317; color: #eee; border: 1px solid #4a5666; border-radius: 7px; padding: 9px; }
 .chat-composer .chat-toolbar { padding: 6px 0 0; flex-wrap: nowrap; }
 .chat-composer .chat-icon-button { flex-shrink: 0; }
-#agent-chat > .chat-button { margin: 0 10px 8px; }
 .chat-tooltip { position: fixed; z-index: 10000; max-width: min(300px, calc(100vw - 16px)); max-height: calc(100vh - 16px); padding: 6px 9px; border: 1px solid #526277; border-radius: 6px; background: #273342; color: #edf4fc; box-shadow: 0 3px 12px #0006; font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; pointer-events: none; }
 .chat-tooltip[hidden] { display: none; }
