@@ -31,6 +31,9 @@ the successful result's text. Codex excludes commentary/partial-answer phases an
 uses the last completed answer; when phase is absent, later tool/reasoning activity
 invalidates that candidate. The pane records approval/question decisions before
 writing responses, and the protocols restore pending decisions on write failure.
+Codex process recovery after Stop resumes the existing thread and keeps the visible
+transcript. `ProtocolOptions.replayHistory: false` suppresses server history replay
+when the host already retains those items; explicit New chat starts a fresh thread.
 
 When updating the vendored files, preserve these adaptations, run `pnpm test:chat`
 and `pnpm build`, and exercise both providers. The optional live tests

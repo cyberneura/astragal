@@ -53,6 +53,8 @@ export type SessionSummary = { id: string; title: string; updatedAt: number | nu
 export type ProtocolOptions = {
   // 続きから始めるセッションの ID。新しく始める時は null
   resume: string | null;
+  // False when the host already retains the transcript during process recovery.
+  replayHistory?: boolean;
   // Claude Code がディスクに残したセッションの記録を読む。sessionId が null なら一覧、あればその会話
   readClaudeSessions(sessionId: string | null): Promise<string>;
   // 永続セッション (Claude だけ)。繋いだ直後に、それまでの出力が再生される

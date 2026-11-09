@@ -195,3 +195,51 @@ test('pane writeback uses final text and cannot reuse intermediate blocks', () =
   pane.complete(c, commandBlock);
   assert.equal(c.command, 'printf safe');
 });
+
+test('Codex interrupt recovery resumes the thread and preserves the visible transcript', async () => {
+  // Arrange: a conversation with an unfinished shell command.
+  const writes = [], stopped = [];
+  const { pane, c } = paneFixture(async (cmd, args) => {
+    if (cmd === 'agent_write') writes.push({ process: args.id, ...JSON.parse(args.line) });
+    if (cmd === 'agent_stop') stopped.push(args.id);
+  });
+  c.provider = 'codex';
+  async function handshake(expectedMethod) {
+    c.protocol.handleMessage({ id: writes.at(-1).id, result: {} });
+    await settle();
+    const request = writes.at(-1);
+    assert.equal(request.method, expectedMethod);
+    c.protocol.handleMessage({ id: request.id, result: { thread: { id: 'kept-thread', turns: [] }, cwd: '/tmp' } });
+    return request;
+  }
+  await pane.start(c);
+  await handshake('thread/start');
+  const user = { kind: 'user', text: 'Keep this context' };
+  c.items.push(user);
+  await c.protocol.send(user.text);
+  c.protocol.handleMessage({ id: writes.at(-1).id, result: { turn: { id: 'running-turn' } } });
+  c.protocol.handleMessage({ method: 'item/started', params: { threadId: 'kept-thread', item: { type: 'commandExecution', id: 'shell', command: 'sleep 60' } } });
+  const oldProcess = c.process;
+
+  // Act: Stop requires process recovery because the command is still running.
+  await pane.interrupt(c);
+  assert.equal(writes.at(-1).method, 'turn/interrupt');
+  c.protocol.handleMessage({ method: 'turn/completed', params: { threadId: 'kept-thread', turn: { status: 'interrupted' } } });
+  await settle();
+  const resumed = await handshake('thread/resume');
+
+  // Assert: reconnect to the same server-side thread without replaying or clearing UI history.
+  assert.equal(resumed.params.threadId, 'kept-thread');
+  assert.deepEqual(stopped, [oldProcess]);
+  assert.notEqual(c.process, oldProcess);
+  assert.equal(c.ready, true);
+  assert.equal(c.items.filter(item => item === user).length, 1);
+  assert.equal(c.command, null);
+  await c.protocol.send('Continue');
+  assert.equal(writes.at(-1).params.threadId, 'kept-thread');
+
+  // Explicit New chat still starts a fresh conversation.
+  await pane.restart(c);
+  await handshake('thread/start');
+  assert.ok(!c.items.includes(user));
+});

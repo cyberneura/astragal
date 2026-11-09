@@ -431,6 +431,22 @@ The build produces `src-tauri/target/release/bundle/macos/Astragal.app` on macOS
 (`./astragal` is a CLI wrapper that launches that bundle) and the NSIS installer under
 `src-tauri/target/release/bundle/nsis/` on Windows (`pnpm tauri build --bundles nsis`).
 
+### Local deployment on macOS
+
+```shell
+pnpm deploy:local
+```
+
+`scripts/local-deploy.sh` builds for the current Mac, signs the app with the installed
+`Developer ID Application: Cyberneura K.K. (2YN5TLNQ9J)` certificate, and replaces
+`/Applications/Astragal.app`. Set `SIGN_IDENTITY` to use another signing identity or
+`DEST_DIR` to use another existing installation directory. Reusing the same identity
+keeps macOS folder access permissions stable across builds.
+
+The script verifies the signature before replacing the installed app and removes the
+build-directory copy after installation. It does not notarize, publish a release, or
+restart the running app. Restart Astragal when ready to use the new build.
+
 ## Release
 
 A release is triggered by the version in `src-tauri/tauri.conf.json`. Change the version

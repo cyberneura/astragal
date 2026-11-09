@@ -1,7 +1,7 @@
 {
   "name": "astragal",
   "private": true,
-  "version": "0.16.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "release": "bash scripts/release.sh",
+    "deploy:local": "sh scripts/local-deploy.sh",
     "notices": "bash scripts/generate-third-party-notices.sh",
     "test:chat": "node --experimental-strip-types --test tests/chat-context.test.ts tests/chat-protocol.test.mjs"
   },

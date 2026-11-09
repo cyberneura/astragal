@@ -24,6 +24,7 @@ interface Conversation {
   items: Item[];
   process: number | null;
   protocol: ChatProtocol | null;
+  agentSessionId: string | null;
   ready: boolean;
   busy: boolean;
   starting: boolean;
@@ -247,7 +248,7 @@ export function syncAgentChat(): void {
   if (session && !conversations.has(session.id)) {
     const c: Conversation = {
       session, provider: config.agent_chat.provider, cwd: session.context.workingDirectory ?? config.home_directory,
-      items: [], process: null, protocol: null, ready: false, busy: false, starting: false, stopped: false,
+      items: [], process: null, protocol: null, agentSessionId: null, ready: false, busy: false, starting: false, stopped: false,
       draft: "", usage: "", revision: null, interrupted: false, command: null,
       turns: Math.max(0, Math.min(20, config.agent_chat.context_turns)), autoPaste: config.agent_chat.auto_paste, followDirectory: false,
     };
@@ -261,7 +262,7 @@ export function closeAgentChat(session: Session): void {
   if (c.process !== null) void invoke("agent_stop", { id: c.process }).catch(console.error);
   scheduleRender();
 }
-async function restart(c: Conversation): Promise<void> {
+async function restart(c: Conversation, resume: string | null = null): Promise<void> {
   if (c.starting) return;
   c.starting = true; scheduleRender();
   c.stopped = true; c.ready = false; c.busy = false; c.command = null; c.revision = null;
@@ -269,10 +270,11 @@ async function restart(c: Conversation): Promise<void> {
   if (old !== null) {
     try { await invoke("agent_stop", { id: old }); } catch (e) { c.starting = false; note(c, String(e), true); return; }
   }
-  c.items = []; c.usage = ""; rendered = undefined; c.stopped = false;
-  await start(c);
+  if (!resume) { c.items = []; c.usage = ""; c.agentSessionId = null; }
+  rendered = undefined; c.stopped = false;
+  await start(c, resume);
 }
-async function start(c: Conversation): Promise<void> {
+async function start(c: Conversation, resume: string | null = null): Promise<void> {
   c.starting = true; c.ready = false;
   const id = ++nextId; c.process = id;
   const live = () => c.process === id && !c.stopped && conversations.has(c.session.id);
@@ -288,15 +290,15 @@ async function start(c: Conversation): Promise<void> {
     },
     setBusy(busy) { if (!live()) return; c.busy = busy; scheduleRender(); },
     setReady(ready) { if (!live()) return; c.ready = ready; scheduleRender(); },
-    setSession(session) { if (live() && session) note(c, `${session.model} · ${session.detail}`); },
+    setSession(session) { if (!live()) return; c.agentSessionId = session?.sessionId || null; if (session) note(c, `${session.model} · ${session.detail}`); },
     setUsage(usage) { if (!live()) return; c.usage = usage ?? ""; scheduleRender(); },
     setWorkingDirectory(value) { if (!live()) return; c.cwd = value; scheduleRender(); },
     setCommands() {}, setModels() {},
     clear() { if (!live()) return; c.items = []; rendered = undefined; scheduleRender(); },
-    restart(message) { if (!live()) return; note(c, message); void restart(c); },
+    restart(message) { if (!live()) return; note(c, message); void restart(c, c.agentSessionId); },
     interruptFailed(message) { if (!live()) return; note(c, message, true); },
   };
-  c.protocol = createProtocol(c.provider, host, { resume: null, async readClaudeSessions() { return ""; } });
+  c.protocol = createProtocol(c.provider, host, { resume, replayHistory: false, async readClaudeSessions() { return ""; } });
   try {
     await invoke("agent_start", { id, generation, agent: c.provider, cwd: c.cwd });
     if (c.stopped || !conversations.has(c.session.id)) { await invoke("agent_stop", { id }); return; }

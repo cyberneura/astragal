@@ -326,7 +326,7 @@ export function createCodexProtocol(host: ChatHost, options: ProtocolOptions): C
                   threadId = result.thread?.id ?? null;
                   threadCwd = result.cwd ?? null;
                   if (options.resume) {
-                    showHistory(result.thread?.turns ?? []);
+                    if (options.replayHistory !== false) showHistory(result.thread?.turns ?? []);
                     host.note(`resumed session ${threadId}`);
                   }
                   const sandbox = result.sandbox?.type ?? '';

@@ -7,7 +7,7 @@
 # タイポでシェルごと落ちるので使わない。
 # `cd` を含むものはサブシェルで囲み、実行後に作業ディレクトリを動かさない。
 #
-# パッケージマネージャは npm (package-lock.json のみで pnpm-lock.yaml は無い)。
+# パッケージマネージャは pnpm (pnpm-lock.yaml)。
 menu:
   - title: 開発サーバーを起動
     help: >
@@ -28,6 +28,13 @@ menu:
       手元で動かして確かめる用と割り切ること。
       **universal でもない** — `--target` を渡していないのでホストアーキ 1 つぶんだけ。
     shell: ( cd "$(git rev-parse --show-toplevel)" && npm run tauri build )
+
+  - title: Deploy locally to /Applications
+    help: >
+      Build and sign Astragal.app with the installed Developer ID certificate, then
+      replace /Applications/Astragal.app. Does not notarize or publish a release.
+      Running terminal sessions stay open; restart Astragal when ready to use the new build.
+    shell: pnpm deploy:local
 
   - title: ビルド済みのアプリを起動
     help: >
