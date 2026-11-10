@@ -314,6 +314,9 @@ fn cli_invocation(
                     "--no-session-persistence",
                     "--setting-sources",
                     "",
+                    // sandbox を必須にし、利用不可時の続行・sandbox 外への再試行を許さない
+                    "--settings",
+                    r#"{"sandbox":{"enabled":true,"failIfUnavailable":true,"allowUnsandboxedCommands":false}}"#,
                 ]
                 .map(String::from),
             );
@@ -811,7 +814,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_code_runs_without_tools() {
+    fn claude_code_requires_sandbox_without_tools() {
         // Arrange
         let config = TabSummaryConfig {
             provider: TabSummaryProvider::ClaudeCode,
@@ -831,12 +834,25 @@ mod tests {
             .windows(2)
             .any(|w| w == ["--model", "haiku"]));
         assert!(invocation.args.contains(&"--strict-mcp-config".to_string()));
+        assert!(invocation
+            .args
+            .windows(2)
+            .any(|w| w == ["--setting-sources", ""]));
+        let settings = invocation
+            .args
+            .iter()
+            .position(|a| a == "--settings")
+            .unwrap();
+        let settings: Value = serde_json::from_str(&invocation.args[settings + 1]).unwrap();
+        assert_eq!(settings["sandbox"]["enabled"], true);
+        assert_eq!(settings["sandbox"]["failIfUnavailable"], true);
+        assert_eq!(settings["sandbox"]["allowUnsandboxedCommands"], false);
         assert_eq!(invocation.workdir, PathBuf::from("/tmp/x"));
         assert_eq!(invocation.output_file, None);
     }
 
     #[test]
-    fn codex_runs_without_shell_and_reads_the_reply_file() {
+    fn codex_requires_read_only_sandbox_without_shell_and_reads_the_reply_file() {
         // Arrange
         let config = TabSummaryConfig {
             provider: TabSummaryProvider::Codex,
@@ -850,6 +866,10 @@ mod tests {
 
         // Assert
         assert_eq!(invocation.program, "/opt/codex");
+        assert!(invocation
+            .args
+            .windows(2)
+            .any(|w| w == ["--sandbox", "read-only"]));
         for feature in [
             "shell_tool",
             "unified_exec",
