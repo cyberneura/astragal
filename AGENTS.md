@@ -442,50 +442,17 @@ webview の初期背景は白なので、新しいウインドウは `visible(fa
 `requestAnimationFrame` の中で送ると永遠に出ない。WebKit は見えていないページの
 フレームを止めるため。DOM 更新の直後にそのまま invoke する。
 
-### アイコン
+### macOS app icon
 
-用途ごとに余白と色の扱いが違う。手順は `README.md` の「Icons」を参照。
-`pnpm tauri icon` は `src-tauri/icons/` を毎回まるごと上書きするので、単発で流すと
-mac 用の余白と、Windows 用に拡大した図柄が黙って消える。
+Run `bash scripts/generate-macos-icons.sh` with Xcode on macOS. Fixed artwork,
+layout measurements, size-specific sources and the verification command are in
+`resources/app-icons/README.md`. Small @1x backgrounds reach the canvas edges;
+the glyph fits inside the central 80%. Larger backgrounds have 10% outer margins.
+Do not replace the generated ICNS with `tauri icon` / `iconutil`: preserve the
+ARGB small entries and the matching Assets.car / CFBundleIconName registration.
+Native rendering is verified by `.github/workflows/macos-icons.yml`.
 
-**Windows のアプリアイコン (`icon.ico`) は専用のマスター `astragal-win-icon` から作る**
-(CYBERNEURA-DEV-884)。背景を full-bleed にするだけでは足りず、図柄そのものを背景の 86%
-まで拡大している (`generate.py` の `WIN_MARK_FILL_PERCENT`)。暗い背景は Windows のダークな
-タスクバーに溶けるので、見た目の大きさは明るい図柄で決まり、macOS と同じ配置 (高さ 68%)
-では他のアプリより小さく見えていた。macOS の icns と `32x32.png` 等の素の PNG は変えていない。
-
-`icon.ico` の**先頭のエントリ**がウインドウアイコン (タイトルバー / Alt-Tab) に使われる
-(tauri-codegen の `CachedIcon::new_ico` が `entries()[0]` を取る)。`tauri icon` は 32px を
-先頭に書く。NSIS のインストーラーは `bundle.windows.nsis.installerIcon` を指定しないと
-NSIS 既定のアイコンになる (v0.8.0 までの setup.exe はそうだった)。
-
-`src-tauri/icons/icon.icns` の中身は `resources/app-icons/inspect_icns.py` で一覧できる
-(標準ライブラリのみ。16〜512px に抜けがあれば exit 1。1024px は「あると良い」扱いで、
-512px のマスターしか無いアプリでは作りようがないため落とさない)。
-**アイコンが低解像度に見えるという報告が来たら、まずこれを流して原因がこちら側かを切り分ける。**
-
-抜けていた場合は `resources/app-icons/build_icns.py <master.png> <out.icns>` で作り直せる。
-こちらも標準ライブラリのみで、macOS の `iconutil` / `sips` も Pillow も要らない
-(縮小は 2 の冪の整数倍だけなので、区画の平均がそのまま答えになる。色はアルファを
-乗せてから平均するので、縁に黒が乗らない)。**このリポジトリ以外の
-mac アプリ (quickllm / clipboard-palette 等) のアイコンもこれで直している** —
-icns を扱う道具はここに置くという約束で、各リポジトリに同じスクリプトを撒かない。
-
-現在の `icon.icns` は `build_icns.py` で 1024px のマスターから作ったもので、
-16 / 32 / 64 / 128 / 256 / 512 / 1024px をすべて持ち、**大きい順に並んでいる**。
-
-**並び順が効く。** 1Password の SSH キー許可ダイアログ (「Allow <アプリ> to use SSH key」) は
-**サイズを選ばず icns の先頭のエントリを表示サイズに拡縮して出す**。先頭が 16px (`tauri icon` / `iconutil` 製) だと
-ボケ、大きい順なら鮮明に出る。2026-10-02 に macOS 上で、大きい順の Astragal 0.8.2 は鮮明、
-小さい順の Queryfolio / quickllm はボケることを確かめた。
-
-- `pnpm tauri icon` / `iconutil` は小さい順の icns を書くので、**icns はそれで作らない**
-  (手順は `README.md` の「アイコン」)
-- Finder / Dock / NSImage のようにサイズを選んで引く経路は並び順に依存しない
-- このダイアログは `screencapture` に写らない。確認はユーザーの目視に頼る
-- 検証用の .app を作って確かめる手は効かなかった。ad-hoc 署名だと 1Password は即座に拒否し、
-  Developer ID で署名しても (`NSApplication` を起こしても) ダイアログを出さずに保留したままに
-  なる。確認は配布している実アプリで行う
+Windows and menu-bar assets keep their independent generators.
 
 ## 依存ライブラリの挙動を調べる時
 
