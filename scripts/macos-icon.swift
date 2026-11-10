@@ -147,6 +147,7 @@ func render(_ image: NSImage?, icon: IconRef? = nil, size: Int, scale: Int = 1) 
     let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels,
         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
         colorSpaceName: .deviceRGB, bytesPerRow: pixels * 4, bitsPerPixel: 32)!
+        .retagging(with: .sRGB)!
     bitmap.bitmapData!.initialize(repeating: 0, count: bitmap.bytesPerRow * pixels)
     bitmap.size = NSSize(width: size, height: size)
     NSGraphicsContext.saveGraphicsState()

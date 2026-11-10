@@ -24,5 +24,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Verify PNG color metadata and original background
+        run: python3 scripts/verify-macos-icon-colors.py
       - name: Verify native icon rendering
         run: swift scripts/macos-icon.swift verify resources/app-icons/AppIcon.iconset src-tauri/icons Astragal

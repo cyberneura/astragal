@@ -13,7 +13,11 @@ let configURL = URL(fileURLWithPath: CommandLine.arguments[1]).standardizedFileU
 let directory = configURL.deletingLastPathComponent()
 let layout = try JSONDecoder().decode(Layout.self, from: Data(contentsOf: configURL))
 let sourceURL = directory.appendingPathComponent(layout.source)
+// The SVG master uses sRGB hex colors but its PNG has no color-space tag.
+// Assign sRGB without converting those components. Device RGB PNG export can
+// otherwise emit gAMA=2.2, which gamma-aware decoders display far too brightly.
 let source = NSBitmapImageRep(data: try Data(contentsOf: sourceURL))!
+    .retagging(with: .sRGB)!
 let original = source.cgImage!
 func rectangle(_ v: [Double]) -> CGRect { CGRect(x: v[0], y: v[1], width: v[2], height: v[3]) }
 let body = rectangle(layout.body)
@@ -29,7 +33,7 @@ if layout.whiteGradientGlyph == true {
     let h = Int(body.height)
     let strip = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1, pixelsHigh: h,
         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-        colorSpaceName: .deviceRGB, bytesPerRow: 4, bitsPerPixel: 32)!
+        colorSpaceName: .deviceRGB, bytesPerRow: 4, bitsPerPixel: 32)!.retagging(with: .sRGB)!
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: strip)
     for y in 0..<h {
@@ -52,7 +56,7 @@ if layout.whiteGradientGlyph == true {
     let mask = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(glyph.width),
         pixelsHigh: Int(glyph.height), bitsPerSample: 8, samplesPerPixel: 4,
         hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
-        bytesPerRow: Int(glyph.width)*4, bitsPerPixel: 32)!
+        bytesPerRow: Int(glyph.width)*4, bitsPerPixel: 32)!.retagging(with: .sRGB)!
     for y in 0..<Int(glyph.height) {
         let sy = Int(glyph.minY)+y
         let bg = source.colorAt(x: Int(body.minX+body.width*0.08), y: sy)!
@@ -67,7 +71,7 @@ if layout.whiteGradientGlyph == true {
 func canvas(_ size: Int, small: Bool) -> NSBitmapImageRep {
     let b = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size,
         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-        colorSpaceName: .deviceRGB, bytesPerRow: size*4, bitsPerPixel: 32)!
+        colorSpaceName: .deviceRGB, bytesPerRow: size*4, bitsPerPixel: 32)!.retagging(with: .sRGB)!
     b.bitmapData!.initialize(repeating: 0, count: b.bytesPerRow*size)
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: b)
@@ -96,7 +100,7 @@ for (pt,scale) in [(16,1),(16,2),(32,1),(32,2),(128,1),(128,2),(256,1),(256,2),(
     let rendered=canvas(small ? n*4 : n,small:small)
     let image=NSImage(cgImage:rendered.cgImage!,size:NSSize(width:n,height:n))
     let out=NSBitmapImageRep(bitmapDataPlanes:nil,pixelsWide:n,pixelsHigh:n,bitsPerSample:8,
-        samplesPerPixel:4,hasAlpha:true,isPlanar:false,colorSpaceName:.deviceRGB,bytesPerRow:n*4,bitsPerPixel:32)!
+        samplesPerPixel:4,hasAlpha:true,isPlanar:false,colorSpaceName:.deviceRGB,bytesPerRow:n*4,bitsPerPixel:32)!.retagging(with: .sRGB)!
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current=NSGraphicsContext(bitmapImageRep:out)
     NSGraphicsContext.current!.imageInterpolation = .high
@@ -105,7 +109,9 @@ for (pt,scale) in [(16,1),(16,2),(32,1),(32,2),(128,1),(128,2),(256,1),(256,2),(
     // A barely translucent antialiased outer edge prevents macOS 27 from
     // treating the opaque plate as an inset picture and adding a white frame.
     // No transparent band is added: the background still reaches every edge.
-    let final = NSBitmapImageRep(data: out.representation(using: .png,properties: [:])!)!
+    // Do not round-trip through NSBitmapImageRep(data:) here: it imports
+    // an sRGB PNG with a gamma property that gets re-exported as gAMA=2.2.
+    let final = out
     if small {
         for y in 0..<n { for x in 0..<n where x==0 || y==0 || x==n-1 || y==n-1 {
             var pixel=[UInt](repeating: 0,count: 4)
