@@ -25,3 +25,12 @@ The outermost small-image pixels retain an antialiased alpha up to 239/255,
 without an empty outer band. Fully opaque edges triggered a light native frame
 on macOS 27. Verification compares native edge colors with the actual source,
 because two equally framed app fixtures can otherwise agree and both be wrong.
+
+The SVG defines the plate as sRGB `#1e1e2e` and the mark as `#f2d5a0`.
+The untagged master is assigned sRGB without changing those components, and
+every drawing/export bitmap is explicitly tagged sRGB. Do not export Device RGB
+PNGs: AppKit emitted `gAMA=2.2`, making the plate pale in gamma-aware consumers
+(such as the reported 1Password dialog) even though raw RGB stayed unchanged.
+`python3 scripts/verify-macos-icon-colors.py` independently validates the PNG
+metadata and the opaque background samples without AppKit. Generation and CI
+run this alongside the native rendering assertions.
