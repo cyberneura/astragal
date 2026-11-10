@@ -1922,6 +1922,7 @@ pub fn run() {
             .inner_size(small_spec.width, small_spec.height)
             .resizable(true)
             .decorations(false)
+            .theme(Some(tauri::Theme::Dark))
             // 吹き出しのツノの周りを抜くために背景を透過させる
             .transparent(true)
             .visible(false)
