@@ -538,8 +538,8 @@ pnpm tauri icon "$PWD/resources/app-icons/astragal-win-icon.png" -o "$tmp"
 cp "$tmp"/icon.ico "$tmp"/Square*Logo.png "$tmp"/StoreLogo.png src-tauri/icons/
 rm -rf "$tmp"
 
-python3 resources/app-icons/build_icns.py \
-  resources/app-icons/astragal-mac-icon.png src-tauri/icons/icon.icns
+cp resources/app-icons/astragal-mac-icon.png resources/app-icons/mac-original.png
+bash scripts/generate-macos-icons.sh
 
 cp resources/app-icons/tray-mac.png resources/app-icons/tray-win.png src-tauri/icons/
 ```
@@ -559,20 +559,9 @@ macOS asks for (16 through 512) is missing. 1024 is reported when it is absent b
 does not fail the check: an app whose master artwork is 512px cannot produce one,
 and an upscaled entry is not resolution — macOS falls back to 512 either way.
 
-To rebuild an `.icns` from a single master PNG (16 through 512, plus 1024 when the
-master is that large):
-
-```shell
-python3 resources/app-icons/build_icns.py <master.png> <out.icns>
-```
-
-It writes the entries largest first. 1Password's SSH key prompt does not pick an entry by
-size: it takes the first image of an `.icns` and scales it to the size it displays.
-`iconutil` and `tauri icon` put the 16px one first, so their output is scaled up and looks
-blurry there. Finder, the Dock and `NSImage` pick an entry by size, so the order
-does not matter to them. That is why `icon.icns` is built with this script rather than
-`tauri icon`.
-
-Also standard library only, so it works where `iconutil` and `sips` do not — which
-is why the icons of the other macOS apps here are rebuilt with this one rather than
-with a copy of it kept in each repository.
+For macOS, use `bash scripts/generate-macos-icons.sh`, not the legacy
+single-master `build_icns.py`. The fixed master, separate small-size layout,
+ARGB encoding, asset-catalog registration and native rendering verification are
+documented in [resources/app-icons/README.md](resources/app-icons/README.md).
+The ICNS stays largest-first for 1Password, while 16pt/32pt @1x use their own
+full-bleed artwork. Windows and tray assets keep their separate source images.

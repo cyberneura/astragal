@@ -6,5 +6,7 @@
 	     消えるのを避けるため、実行時の activation policy とは別にここでも指定する。 -->
 	<key>LSUIElement</key>
 	<true/>
+  <key>CFBundleIconName</key><string>Astragal</string>
+  <key>CFBundleIconFile</key><string>icon.icns</string>
 </dict>
 </plist>
