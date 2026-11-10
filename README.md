@@ -373,9 +373,15 @@ tab_summary:
   as vim is not sent.
 - **The CLIs run without tools.** Terminal output can contain anything, including text
   written to look like instructions, so `claude` is started with `--tools ""` and no MCP
-  servers or settings, and `codex` with its shell, code, image, browser, app and sub-agent tools disabled and without your
+  servers or user/project settings, and `codex` with its shell, code, image, browser, app and sub-agent tools disabled and without your
   `~/.codex/config.toml` (so no MCP servers). They
   run in an empty temporary directory.
+- **Sandboxing is required for Claude Code and Codex summaries.** Codex uses
+  `--sandbox read-only`. Claude Code is started with sandboxing enabled,
+  `failIfUnavailable: true` and `allowUnsandboxedCommands: false`: it refuses to start
+  if sandboxing is unavailable and cannot retry commands outside the sandbox.
+  This requires a Claude Code version that supports these settings and a supported
+  sandbox environment; native Windows cannot run Claude Code summaries this way.
 - `claude` and `codex` are started through your login shell (zsh / bash) so that they find
   `node` and themselves on your usual `PATH`. With another shell, or if they are installed
   somewhere unusual, set `command` to the full path. On Windows, `command` must point to an

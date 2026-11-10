@@ -270,6 +270,11 @@ stream-json / app-server の共通エンジンと Markdown 描画のコピー。
   `code_mode_host` (`functions.exec` の JS) は最初は切り忘れていた (CYBERNEURA-DEV-1198 の Codex レビューで発覚)。
   モデルの「使えるツール」の自己申告は当てにならないので、確かめる時は実際にファイルを読ませる。
   知らない feature 名を渡すと codex は `Unknown feature flag` で起動を断る (要約が失敗するだけで、緩む方には倒れない)
+- **Claude Code / Codex の要約は sandbox を必須にする。** Codex は `--sandbox read-only`、
+  Claude Code は `--settings` で `sandbox.enabled: true` / `failIfUnavailable: true` /
+  `allowUnsandboxedCommands: false` を渡す。利用不可時の続行や sandbox 外への再試行を許さない。
+  Claude Code はこれらの設定に対応した版と sandbox 対応環境が必要 (native Windows は対象外)。
+  ツールの無効化も維持する。
 - テキストは全部標準入力で渡す (引数は `ps` に見える)。作業ディレクトリは生成ごとの空の一時
   ディレクトリ (プロジェクトの CLAUDE.md / AGENTS.md を拾わない)。Codex の応答は `-o` のファイルから読む
 - `claude` / `codex` は node 製なので、GUI の最小の PATH では node が見つからない (asdf / nvm)。
