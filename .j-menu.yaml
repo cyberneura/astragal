@@ -31,8 +31,8 @@ menu:
 
   - title: Deploy locally to /Applications
     help: >
-      Build and sign Astragal.app with the installed Developer ID certificate, then
-      replace /Applications/Astragal.app. Does not notarize or publish a release.
+      Build, sign, notarize and staple Astragal.app using the cyberneura-notary Keychain
+      profile, then replace /Applications/Astragal.app. Does not publish a release.
       Running terminal sessions stay open; restart Astragal when ready to use the new build.
     shell: pnpm deploy:local
 

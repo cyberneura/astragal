@@ -466,3 +466,7 @@ Tauri / tao / tray-icon は、ドキュメントに書かれていない単位�
 今回の座標系の問題は全てそこで確定した。
 
 Tauri の API は context7 MCP でも確認できる。
+
+## ローカル配置
+
+`pnpm deploy:local` は Developer ID 署名・Hardened Runtime・タイムスタンプ付きの `.app` を、Keychain の `cyberneura-notary` (`NOTARY_PROFILE` で変更可) で Apple 公証し、staple と Gatekeeper の検証後に `/Applications` に配置する。公証失敗時は既存アプリを置き換えず、稼働中のターミナルセッションも終了しない。`--timestamp=none` での再署名は公証チケットを無効化するため行わない。
