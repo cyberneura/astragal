@@ -1,58 +1,45 @@
 #!/bin/sh
-# Build and sign a local app, then replace the installed copy.
+# Build, notarize and install without interrupting running app sessions.
 set -eu
 
 cd "$(dirname "$0")/.."
-
-if [ "$(uname -s)" != Darwin ]; then
-  echo "Error: local deployment is only supported on macOS." >&2
-  exit 1
-fi
-
-# Reusing the signing identity preserves macOS folder access permissions.
+[ "$(uname -s)" = Darwin ] || { echo "macOS is required." >&2; exit 1; }
 SIGN_IDENTITY="${SIGN_IDENTITY:-Developer ID Application: Cyberneura K.K. (2YN5TLNQ9J)}"
+NOTARY_PROFILE="${NOTARY_PROFILE:-cyberneura-notary}"
 DEST_DIR="${DEST_DIR:-/Applications}"
 DEST_DIR="$(cd "$DEST_DIR" && pwd -P)"
-bundle_dir="$PWD/src-tauri/target/release/bundle/macos"
-mkdir -p "$bundle_dir"
-bundle="$(cd "$bundle_dir" && pwd -P)/Astragal.app"
-dest="$DEST_DIR/Astragal.app"
+product_name="$(node -p "require('./src-tauri/tauri.conf.json').productName")"
+bundle="$PWD/src-tauri/target/release/bundle/macos/${product_name}.app"
+dest="$DEST_DIR/${product_name}.app"
+[ "$bundle" != "$dest" ] || { echo "Build and installation directories must differ." >&2; exit 1; }
 
-if [ "$bundle" = "$dest" ]; then
-  echo "Error: the installation directory must differ from the build directory." >&2
-  exit 1
-fi
+# Fail before building if notarization credentials are unavailable.
+xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" --output-format json >/dev/null
+(
+  # This script notarizes using Keychain after the build, exactly once.
+  unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID APPLE_API_KEY APPLE_API_ISSUER APPLE_API_KEY_PATH
+  APPLE_SIGNING_IDENTITY="$SIGN_IDENTITY" CARGO_TARGET_DIR="$PWD/src-tauri/target" \
+    pnpm exec tauri build --bundles app --config '{"bundle":{"macOS":{"hardenedRuntime":true}}}'
+)
+bash scripts/notarize-app.sh "$bundle" "$NOTARY_PROFILE"
 
-rm -rf "$bundle"
-CARGO_TARGET_DIR="$PWD/src-tauri/target" pnpm tauri build --bundles app
-
-# Local builds do not need notarization or an online timestamp service.
-codesign --force --deep --timestamp=none --sign "$SIGN_IDENTITY" "$bundle"
-codesign --verify --deep --strict "$bundle"
-
-# Copy onto the destination volume before replacing the existing installation.
-staging="$(mktemp -d "$DEST_DIR/.astragal-deploy.XXXXXX")"
+staging="$(mktemp -d "$DEST_DIR/.notarized-deploy.XXXXXX")"
 cleanup() {
-  if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
-    if [ -e "$staging/previous.app" ] || [ -L "$staging/previous.app" ]; then
-      if ! mv "$staging/previous.app" "$dest"; then
-        echo "Error: restore the previous app from $staging/previous.app." >&2
-        return
-      fi
+  if [ ! -e "$dest" ] && [ ! -L "$dest" ] && [ -e "$staging/previous.app" ]; then
+    if ! mv "$staging/previous.app" "$dest"; then
+      echo "Restore the previous app from $staging/previous.app." >&2
+      return
     fi
   fi
   rm -rf "$staging"
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
-ditto "$bundle" "$staging/Astragal.app"
-codesign --verify --deep --strict "$staging/Astragal.app"
-
-if [ -e "$dest" ] || [ -L "$dest" ]; then
-  mv "$dest" "$staging/previous.app"
-fi
-mv "$staging/Astragal.app" "$dest"
+ditto "$bundle" "$staging/$product_name.app"
+codesign --verify --deep --strict "$staging/$product_name.app"
+xcrun stapler validate "$staging/$product_name.app"
+if [ -e "$dest" ] || [ -L "$dest" ]; then mv "$dest" "$staging/previous.app"; fi
+mv "$staging/$product_name.app" "$dest"
 rm -rf "$bundle"
-
-echo "Deployed: $dest"
-echo "Restart Astragal to use the new build. Running terminal sessions are not closed."
+echo "Installed notarized app: $dest"
+echo "Restart $product_name when ready. Running sessions have not been closed."

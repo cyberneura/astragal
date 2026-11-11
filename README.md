@@ -571,3 +571,9 @@ ARGB encoding, asset-catalog registration and native rendering verification are
 documented in [resources/app-icons/README.md](resources/app-icons/README.md).
 The ICNS stays largest-first for 1Password, while 16pt/32pt @1x use their own
 full-bleed artwork. Windows and tray assets keep their separate source images.
+
+### Notarized local installation
+
+`pnpm deploy:local` builds and signs the app with the Cyberneura Developer ID, submits it to Apple for notarization, staples the ticket, and verifies it before replacing `/Applications/Astragal.app`. It uses the `cyberneura-notary` Keychain profile (`NOTARY_PROFILE` overrides it). A failed build or notarization leaves the installed app intact. Running terminal sessions remain open; restart Astragal when ready.
+
+On a new Mac, register credentials interactively with `xcrun notarytool store-credentials cyberneura-notary --team-id 2YN5TLNQ9J`. Use the notarization Apple ID and app-specific password stored in the 1Password `development/github-secrets-apple-signing/env` item. Never commit or log credential values.
