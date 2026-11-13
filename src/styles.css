@@ -158,7 +158,8 @@ html, body {
   color: #e6e6e6;
 }
 
-#new-tab {
+#new-tab,
+#mouse-toggle {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -175,8 +176,27 @@ html, body {
   transition: background 0.1s;
 }
 
-#new-tab:hover {
+#new-tab:hover,
+#mouse-toggle:hover {
   background: #3a3a3a;
+}
+
+/* Mouse integration (mouse-integration.ts)。OFF の時は斜線を引き、色で状態が分かるようにする */
+#mouse-toggle .mouse-off-slash {
+  display: none;
+}
+
+#mouse-toggle.off {
+  color: #e0a84c;
+}
+
+#mouse-toggle.off .mouse-off-slash {
+  display: inline;
+}
+
+#mouse-toggle:focus-visible {
+  outline: 2px solid #86bafa;
+  outline-offset: 2px;
 }
 
 /* ウインドウを掴む領域。ドラッグ判定はイベントの target 自身に

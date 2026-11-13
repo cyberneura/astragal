@@ -181,6 +181,9 @@ jobs:
       - name: Test agent chat context and writeback
         run: pnpm test:chat
 
+      - name: Test the mouse integration toggle
+        run: pnpm test:mouse
+
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 

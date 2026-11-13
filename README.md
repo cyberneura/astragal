@@ -24,6 +24,12 @@ Website: https://www.cyberneura.com/app/astragal
   as vim or less is showing; the scrollback is still there once you leave it
 - Inline images: `imgcat` (iTerm2's inline image protocol) and SIXEL output are drawn in
   the terminal. See [Inline images](#inline-images)
+- Mouse integration toggle: the mouse button between `+` and the chat button in the tab
+  bar (also View > Mouse Integration on macOS, and the menu bar icon's right-click menu)
+  turns mouse reporting on and off. When it is off, programs such as vim or tmux no longer
+  receive clicks and drags, so dragging selects text for copying. Turning it back on
+  restores the mouse mode the program asked for. It applies to every tab and the popover,
+  and is on again after the app restarts
 - Cmd+click a URL to open it in the default browser. Holding Cmd underlines the URL
   under the pointer, and a URL that soft-wraps across lines opens in full
 - Click the menu bar icon to show or hide the popover; right-click it for the menu
@@ -508,6 +514,7 @@ pnpm notices
 ```shell
 cd src-tauri && cargo test
 pnpm exec tsc --noEmit
+pnpm test:mouse
 ```
 
 ## Icons

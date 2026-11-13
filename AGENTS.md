@@ -28,6 +28,7 @@ public リポジトリなので、**README・UI 文字列・エラーメッセ�
 | `src/ai.ts` / `src-tauri/src/ai.rs` | Cmd+I の Ask AI (依頼からシェルコマンドを 1 行作り、プロンプトに貼り付ける。既定は無効) |
 | `src/tab-summary.ts` / `src-tauri/src/tab_summary.rs` | タブ名と要約の自動生成 (いつ送るか・表示 / provider の起動と応答の整形。既定は無効) |
 | `src/remote-drop.ts` / `src-tauri/src/remote_drop.rs` | ssh 中のタブへファイルをドロップして scp で送る (ドロップゾーンと確認ダイアログ / ssh の argv の解釈と scp の引数) |
+| `src/mouse-integration.ts` / `src/mouse-gate.ts` / `src-tauri/src/mouse_integration.rs` | Mouse integration の ON / OFF (タブバーのボタン・View メニュー・トレイメニュー / xterm のマウスレポートを止める門番 / アプリ全体の状態とメニューのチェック表示) |
 | `src/search.ts` | Cmd+F の検索バー (xterm-addon-search)。ウインドウに 1 つで、アクティブなタブを検索する |
 | `src/main.ts` / `src/small.ts` | メインウインドウ / 吹き出しの入口 |
 | `src/about.ts` | トレイメニューの About から開くウインドウ。バージョンの下にビルド日時 (UTC) を出す (`app_info` の `build_date`) |
@@ -105,6 +106,30 @@ Cmd+K (Windows は Ctrl+Shift+K) は `terminal.clear()` で、シェルには何
 `xterm-addon-search` 0.13 は行テキストのキャッシュをカーソル移動でしか捨てず、
 プロンプトが同じ位置へ戻ると新しい出力が検索に掛からない。`createSearchAddon` が
 書き込みのたびに非公開の `_destroyLinesCache` を呼んで回避している。
+
+## Mouse integration の ON / OFF (CYBERNEURA-DEV-1262)
+
+OFF にすると vim / tmux 等がマウスレポートを要求していてもクリック・ドラッグを pty へ送らず、
+ドラッグで範囲選択できる。設計上の前提:
+
+- **xterm 5 には公開 API が無いので、非公開の `_core.coreMouseService` を使う** (`mouse-gate.ts`)。
+  インスタンスに `activeProtocol` のアクセサを置いて prototype のものを隠し、アプリの要求
+  (DECSET 9 / 1000 / 1002 / 1003、DECRST、リセット) を全部覚える。OFF の間は xterm に渡さず NONE のまま、
+  ON に戻したら覚えておいたプロトコルを入れ直す。`@xterm/*` へ移る時はここも確かめ直す。
+  形が想定と違えば `MouseGate.attach` が null を返し、警告を出して何もしない (ボタンが効かなくなるだけ)
+- **一度 xterm に渡してから `onProtocolChange` で NONE に戻す方式にしないこと。** xterm 自身の
+  リスナーが先に動いて `SelectionService.disable()` が選択範囲を消すので、tmux のようにモードを
+  送り直すアプリだと OFF で選択している最中に選択が消える (Codex のレビューで指摘)
+- CSI ハンドラで DECSET を握りつぶす方式も採らなかった。`\x1b[?1049;1000h` のように他のモードと
+  混ざったシーケンスを、マウスの分だけ捨てて同じ位置で処理させる手段が無い
+- 状態はアプリ全体で 1 つ、Rust がメモリに持つ (再起動で ON)。ボタン・トレイ・View メニューの
+  どれも `mouse_integration::set` を通り、チェック表示を揃えて `mouse-integration-changed` を
+  全ウインドウへ emit する。small にボタンは無いが状態には従う
+- トレイと View の項目の id は分ける (メニューイベントのハンドラが両方のイベントを受けるので、
+  同じ id だと 1 回で 2 回切り替わる)。メニューにアクセラレータは付けない
+- `pnpm test:mouse` は偽の CoreMouseService での単体テスト。本物の xterm 5.3 では、ヘッドレス
+  Chromium (Web フォントを読ませないと open() でクラッシュする) で 1002 / 1006 / 1049;1003 を書いて
+  ドラッグし、OFF で選択・ON で SGR のマウスレポートになること、OFF で選択中にモードを送り直されても選択が残ることを確かめた (2026-11-13)。実機は未確認
 
 ## インライン画像 (CYBERNEURA-DEV-976)
 
