@@ -3,6 +3,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { applyTerminalBackground, loadConfig, showStartupError } from "./terminal";
 import { initTabs } from "./tabs";
 import { applyPlatformClass } from "./platform";
+import { initMouseIntegration } from "./mouse-integration";
 
 applyPlatformClass();
 
@@ -64,6 +65,7 @@ window.addEventListener("load", async () => {
       },
       config,
     );
+    initMouseIntegration(null).catch(console.error);
   } catch (e) {
     showStartupError(terminalsContainer, e);
   }

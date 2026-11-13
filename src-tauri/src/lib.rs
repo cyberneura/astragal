@@ -3,6 +3,7 @@ mod ai;
 mod chat_window;
 mod cli;
 mod config;
+mod mouse_integration;
 #[cfg(target_os = "macos")]
 mod objc_exception;
 mod remote_drop;
@@ -781,7 +782,17 @@ fn app_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
         .item(&PredefinedMenuItem::paste(app, None)?)
         .item(&PredefinedMenuItem::select_all(app, None)?)
         .build()?;
+    // ショートカットは付けない。Cmd 系のキーはターミナルのキーバインドに使っており、
+    // メニューのアクセラレータに奪われると WebView まで届かなくなる
+    let mouse_integration = CheckMenuItemBuilder::with_id(
+        mouse_integration::APP_MENU_ID,
+        mouse_integration::MENU_LABEL,
+    )
+    .checked(mouse_integration::is_enabled(app))
+    .build(app)?;
     let view = SubmenuBuilder::new(app, "View")
+        .item(&mouse_integration)
+        .separator()
         .item(&PredefinedMenuItem::fullscreen(app, None)?)
         .build()?;
     let window = SubmenuBuilder::with_id(app, tauri::menu::WINDOW_SUBMENU_ID, "Window")
@@ -1300,6 +1311,13 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let separator = tauri::menu::PredefinedMenuItem::separator(app)?;
     let about = MenuItemBuilder::with_id("about", "About Astragal").build(app)?;
     let licenses = MenuItemBuilder::with_id("licenses", "Third-Party Licenses").build(app)?;
+    let mouse_integration = CheckMenuItemBuilder::with_id(
+        mouse_integration::TRAY_MENU_ID,
+        mouse_integration::MENU_LABEL,
+    )
+    .checked(mouse_integration::is_enabled(app))
+    .build(app)?;
+    mouse_integration::register_item(app, mouse_integration.clone());
     let autostart = CheckMenuItemBuilder::with_id("autostart", "Launch at Login")
         .checked(autostart_enabled(app))
         .build(app)?;
@@ -1312,6 +1330,8 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .item(&show_small)
         .item(&toggle)
         .item(&separator)
+        .item(&mouse_integration)
+        .separator()
         .item(&autostart);
     #[cfg(target_os = "macos")]
     let menu = menu.item(&install_cli);
@@ -1360,6 +1380,7 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                     eprintln!("astragal: failed to show the licenses window: {e}");
                 }
             }
+            mouse_integration::TRAY_MENU_ID => mouse_integration::toggle(app),
             "autostart" => toggle_autostart(app, &autostart),
             #[cfg(target_os = "macos")]
             "install_cli" => install_cli_command(app),
@@ -1835,6 +1856,7 @@ pub fn run() {
         .menu(app_menu)
         .on_menu_event(|app, event| match event.id.as_ref() {
             APP_MENU_HIDE_ID => hide_all_windows(app),
+            mouse_integration::APP_MENU_ID => mouse_integration::toggle(app),
             APP_MENU_ABOUT_ID => {
                 if let Err(e) = show_about_window(app) {
                     eprintln!("astragal: failed to show the about window: {e}");
@@ -1875,6 +1897,7 @@ pub fn run() {
         }))
         .manage(agent_process::AgentState::default())
         .manage(chat_window::ChatWindowState::default())
+        .manage(mouse_integration::MouseIntegrationState::default())
         .manage(AppState {
             sessions: Mutex::new(Vec::new()),
             next_tab_id: Mutex::new(0),
@@ -1967,6 +1990,8 @@ pub fn run() {
             ai_suggest_command,
             tab_summary_generate,
             app_info,
+            mouse_integration::mouse_integration,
+            mouse_integration::set_mouse_integration,
             about_window_ready,
             third_party_notices,
             licenses_window_ready,

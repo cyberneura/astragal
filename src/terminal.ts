@@ -9,6 +9,7 @@ import { ImageAddon } from "xterm-addon-image";
 import type { SearchAddon } from "xterm-addon-search";
 import { Unicode11Addon } from "xterm-addon-unicode11";
 import { enableLinks } from "./links";
+import { attachMouseIntegration } from "./mouse-integration";
 import { IS_WINDOWS } from "./platform";
 import { createSearchAddon } from "./search";
 import type { TabSummaryConfig } from "./tab-summary";
@@ -39,6 +40,8 @@ export interface Session {
   search: SearchAddon;
   /** URL の Cmd+クリックの登録。タブを閉じる時に解除する */
   links: IDisposable;
+  /** Mouse integration の ON / OFF の対象への登録 (mouse-integration.ts)。タブを閉じる時に解除する */
+  mouse: IDisposable;
   closeOnExit: boolean;
   /** このタブで一度でもユーザーの入力を受けたか。終了時に閉じるかの判定に使う */
   userInteracted: boolean;
@@ -240,6 +243,8 @@ export async function startSession(
   terminal.unicode.activeVersion = "11";
 
   terminal.open(element);
+  // open() の後でないと xterm がマウスイベントのリスナーを登録していない
+  const mouse = attachMouseIntegration(terminal);
 
   const id = await invoke<number>("create_terminal", { launch: launch ?? null });
   const session: Session = {
@@ -249,6 +254,7 @@ export async function startSession(
     fitAddon,
     search,
     links,
+    mouse,
     closeOnExit: config.terminal.close_on_exit,
     userInteracted: false,
     exited: false,
@@ -332,6 +338,7 @@ export async function closeSession(session: Session): Promise<void> {
   pendingExit.delete(session.id);
   closedSessions.add(session.id);
   session.links.dispose();
+  session.mouse.dispose();
   session.terminal.dispose();
   await invoke("close_terminal", { tabId: session.id }).catch(console.error);
 }
