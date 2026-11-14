@@ -422,12 +422,19 @@ the scrollback.
 
 ## Troubleshooting
 
-On macOS, an Objective-C exception that AppKit raises while dispatching an event (a click,
-a key press, a menu) no longer quits Astragal: it is logged and the app keeps running, as in
-other Cocoa apps. Each one is appended to `~/Library/Logs/Astragal/exceptions.log` (name,
-reason and the stack) and also goes to Console.app. Exceptions raised from inside Astragal's
-own native code are not covered and still end the app. If something stops working without the
-app quitting, that file is the place to look and the thing to attach to a bug report.
+Astragal writes down why it stopped, so that a bug report can say more than the system crash
+report does. Attach these files to a bug report:
+
+- `panic.log`: the message, source location and stack of an internal error (a Rust panic)
+  that ended the app.
+- `exceptions.log` (macOS): an Objective-C exception that AppKit raised while dispatching an
+  event (a click, a key press, a menu). These no longer quit Astragal: it records the name,
+  reason and stack, also sends them to Console.app, and keeps running, as other Cocoa apps do.
+  Exceptions raised from inside Astragal's own native code are not covered and still end
+  the app.
+
+The files are in `~/Library/Logs/Astragal/` on macOS and `%LOCALAPPDATA%\Astragal\logs\` on
+Windows (`$XDG_DATA_HOME/Astragal/logs/` or `~/.local/share/Astragal/logs/` on Linux).
 
 ## Development
 

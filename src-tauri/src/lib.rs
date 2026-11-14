@@ -3,6 +3,7 @@ mod ai;
 mod chat_window;
 mod cli;
 mod config;
+mod crash_log;
 mod mouse_integration;
 #[cfg(target_os = "macos")]
 mod objc_exception;
@@ -1838,16 +1839,14 @@ pub fn run() {
         return;
     }
 
+    crash_log::install();
+
     // ウインドウを出す前に設定を確定させる (config_override_command の実行を
     // 含むため、ここで数秒かかることがある)。
     let loaded_config = config::load();
     if let Some(warning) = &loaded_config.warning {
         eprintln!("astragal: {warning}");
     }
-
-    // tao が NSApplication を作る前でもよい (差し替えるのはクラスのメソッド)
-    #[cfg(target_os = "macos")]
-    objc_exception::guard_send_event();
 
     let builder = tauri::Builder::default();
     // 既定のアプリメニューの Hide (Cmd+H) と About を自前の項目に差し替える (`app_menu`)
