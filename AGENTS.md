@@ -33,7 +33,8 @@ public リポジトリなので、**README・UI 文字列・エラーメッセ�
 | `src/main.ts` / `src/small.ts` | メインウインドウ / 吹き出しの入口 |
 | `src/about.ts` | トレイメニューの About から開くウインドウ。バージョンの下にビルド日時 (UTC) を出す (`app_info` の `build_date`) |
 | `src/licenses.ts` | トレイメニューの Third-Party Licenses から開くウインドウ (`THIRD-PARTY-NOTICES.txt` を表示) |
-| `src-tauri/src/objc_exception.rs` / `src-tauri/src/macos/exception_guard.m` | macOS: AppKit がイベント処理中に投げた Objective-C 例外で落ちないように NSApplication の `-sendEvent:` を包む |
+| `src-tauri/src/crash_log.rs` | 落ちた理由の記録。panic hook で `panic.log` に書き、macOS では下の例外の guard を入れる |
+| `src-tauri/src/objc_exception.rs` / `src-tauri/src/macos/exception_guard.m` | macOS: AppKit がイベント処理中に投げた Objective-C 例外で落ちないように NSApplication と NSWindow の `-sendEvent:` を包む |
 | `resources/app-icons/` | アイコンのマスター素材と `generate.py` / `inspect_icns.py` |
 
 常駐ウインドウは 2 つある。`main` (タブ付き) と `small` (メニューバーアイコン直下に出る
@@ -437,29 +438,40 @@ AppKit がクリックでそれを開く。tray-icon 0.24 はボタンに重ね�
 - plist / レジストリにはその時の実行ファイルのパスが書かれる。dev ビルドで有効にすると
   dev のバイナリが登録されるので、確認後は OFF に戻すこと
 
-### イベント処理中の Objective-C 例外 (CYBERNEURA-DEV-1204)
+### 落ちた理由の記録とイベント処理中の Objective-C 例外 (CYBERNEURA-DEV-1204)
 
-v0.14.0 が `abort() called` / 「panic in a function that cannot unwind」で落ちたクラッシュレポートの
-正体は、**AppKit が `sendEvent:` の中で投げた NSException が tao の `extern "C"` の
-`-[TaoApp sendEvent:]` を越えようとして Rust が abort したもの**だった。release は
-`panic = "abort"` なので、Rust の panic なら panic した地点で abort し、スタックの最上位に
-tao のランディングパッドは来ない。普通の Cocoa アプリなら `-[NSApplication run]` が受け止めて
-報告するだけの例外で、何が投げたかは分かっていない (クラッシュレポートからは読めない)。
+`abort() called` / 「panic in a function that cannot unwind」で、スタックの最上位が tao の
+`extern "C"` の `-[TaoApp sendEvent:]` のランディングパッドになるクラッシュは、**その下で投げられた
+NSException が Rust のフレームを越えようとして abort したもの**。release は `panic = "abort"` なので、
+Rust の panic なら panic した地点で abort し、最上位に tao のランディングパッドは来ない。普通の Cocoa
+アプリなら `-[NSApplication run]` が受け止めて報告するだけの例外で、何が投げたかは分かっていない
+(クラッシュレポートからは読めない)。ターミナルで文字を打ちながら Karabiner Elements で日本語入力を
+切り替えた時に起きたことがある。beckwell にも同じ仕組みがある。
 
-- NSApplication 自身の `-sendEvent:` (tao の `[super sendEvent:]` が着く先) を `exception_guard.m` の
-  `@try` 付きの実装に差し替え、受け止めた例外は `NSLog` と
-  `~/Library/Logs/Astragal/exceptions.log` に書いて続ける (`-reportException:` は
-  `NSApplicationCrashOnExceptions` が有効だとそこで落ちるので使わない)。
+- `crash_log::install` を `run()` で設定を読む前に呼ぶ。ログは macOS では `~/Library/Logs/Astragal/`、
+  それ以外では `dirs::data_local_dir()/Astragal/logs/`。1MB を超えたら書き直す
+- panic hook: メッセージ・場所・スレッド・バックトレースを `panic.log` に書いてから既定の hook を呼ぶ。
+  クラッシュレポートにはメッセージが残らず、release は strip 済みなので、場所 (`file:line`) はここでしか読めない
+  (バックトレースはアドレスだけになる)
+- NSApplication と NSWindow 自身の `-sendEvent:` (tao の `[super sendEvent:]` が着く先) を `exception_guard.m` の
+  `@try` 付きの実装に差し替え、受け止めた例外は `NSLog` と `exceptions.log` に書いて続ける
+  (`-reportException:` は `NSApplicationCrashOnExceptions` が有効だとそこで落ちるので使わない)。
+  NSWindow も包むのは、`-[TaoWindow sendEvent:]` (これも `extern "C"`) と、TaoApp が Cmd 付きの keyUp を
+  `[keyWindow sendEvent:]` で直接送る経路が NSApplication の `-sendEvent:` を通らないため。
   受け止められるのは Rust のフレームを挟まずに届いた例外だけ (途中の objc2 のメソッド等から
-  呼んだ AppKit が投げたものは、そのフレームで abort する)。**次に同じ例外が出たら、この
+  呼んだ AppKit が投げたものは、そのフレームで abort する。objc2 の `define_class!` のメソッドは
+  `extern "C-unwind"` だが、`panic = "abort"` なので外来の例外もそこで abort する)。**次に同じ例外が出たら、この
   ログの callStackSymbols で投げた場所が分かる**
+- ログは POSIX の `open` で追記する。`NSFileManager` の `createFileAtPath:` は一時ファイルを経由して置き換えるので、
+  置けない環境がある (Claude Code のサンドボックスの中で失敗した)
 - **`objc2::exception::catch` で書き直さないこと。** 閉包を Rust のトランポリン越しに呼ぶので、
   `panic = "abort"` では例外がそのフレームを通った時点で abort する。投げる側と受け止める側の
   間に Rust のフレームを挟まないために Objective-C で書いている
-- Cmd+keyUp の時に tao が直接呼ぶ `[keyWindow sendEvent:]` は包んでいない (クラッシュは
-  super 呼び出しの側だった)
 - `.m` は build.rs が macOS ターゲットの時だけ cc でビルドする。**Linux では検査できない**
-  (PR の CI の macOS の test ジョブで初めてコンパイルされる)
+  (PR の CI の macOS の test ジョブで初めてコンパイルされる)。例外を受け止めることは Rust のテストでは
+  確かめられない (イベントを流す NSApplication が要る)。確かめる時は、`.m` と一緒に clang でビルドした小さな
+  プログラムで `[NSApp sendEvent:(NSEvent *)[NSObject new]]` と `[window sendEvent:...]` を呼ぶ
+  (unrecognized selector の例外になる)。guard が無ければプロセスが終わり、あればログに 1 件ずつ残る
 - 解析の手順: Release の dmg を展開して arm64 のスライスを取り出し (UUID がレポートの
   `slice_uuid` と一致するか見る)、strip 済みなので LC_FUNCTION_STARTS と `__unwind_info` の
   LSDA からフレームの関数とランディングパッドを引いた。panic 経路の関数は

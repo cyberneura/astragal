@@ -18,6 +18,10 @@ fn main() {
     // 変えたビルドで build.rs が再実行されず、古い日時が残る。存在しないパスを指定して毎回実行させる
     println!("cargo:rerun-if-changed=build-date.always-rerun");
 
+    // panic.log に書く版 (`crash_log.rs`)。version の正本は tauri.conf.json で、Cargo.toml の version は上げていない
+    println!("cargo:rerun-if-changed=tauri.conf.json");
+    println!("cargo:rustc-env=ASTRAGAL_VERSION={}", app_version());
+
     // `objc_exception.rs` が呼ぶ。target は build script の実行環境ではなく
     // ビルド対象で判定する (universal ビルドは aarch64 / x86_64 をそれぞれ作る)
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
@@ -49,4 +53,16 @@ fn format_utc(epoch: u64) -> String {
         seconds / 3_600,
         seconds % 3_600 / 60
     )
+}
+
+// tauri.conf.json のトップレベルの "version" (build-dependencies に JSON のパーサーを足さずに読む)
+fn app_version() -> String {
+    let config = std::fs::read_to_string("tauri.conf.json").expect("tauri.conf.json is readable");
+    config
+        .lines()
+        .find_map(|line| {
+            let value = line.trim().strip_prefix("\"version\":")?.trim();
+            Some(value.trim_end_matches(',').trim_matches('"').to_string())
+        })
+        .expect("tauri.conf.json has a version")
 }
