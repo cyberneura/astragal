@@ -26,6 +26,10 @@ and commands to `main`, and does not enable Chrome integration or bypass
 permissions. History selection, remote targets and persistent attachments are not
 exposed in this UI. The upstream parsers retain their history support.
 
+`ChatHost.turnStarted` is an Astragal addition: Claude calls it after the user
+message is written and Codex after `turn/start` succeeds, so the pane can tell a
+message the agent never accepted (safe to re-queue) from a turn that failed later.
+
 Result items additionally expose `finalText` for terminal writeback. Claude uses
 the successful result's text. Codex excludes commentary/partial-answer phases and
 uses the last completed answer; when phase is absent, later tool/reasoning activity

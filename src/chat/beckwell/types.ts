@@ -72,6 +72,9 @@ export type ChatHost = {
   write(payload: unknown): Promise<boolean>;
   // 応答待ちの間は送信できない
   setBusy(busy: boolean): void;
+  // Astragal: the agent accepted the message sent by `send` (Claude: written to stdin;
+  // Codex: turn/start succeeded). A turn that ends after this is not resent.
+  turnStarted?(): void;
   // メッセージを受け付けられる状態になったか
   setReady(ready: boolean): void;
   setSession(session: SessionInfo | null): void;

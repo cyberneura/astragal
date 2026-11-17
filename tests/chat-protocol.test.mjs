@@ -382,3 +382,27 @@ test('a queued message rejected by Codex turn/start is restored and later messag
   assert.equal(c.queueHeld, true);
   assert.equal(writes.filter(w => w.method === 'turn/start').length, 1);
 });
+
+test('a Codex turn that fails after it started is not re-queued', async () => {
+  const writes = [];
+  const { pane, c } = paneFixture(async (cmd, args) => { if (cmd === 'agent_write') writes.push(JSON.parse(args.line)); });
+  pane.configure({ agent_chat: { blacklist: [] } });
+  c.provider = 'codex'; c.turns = 0;
+  c.session.context = { revision: 1, snapshot: () => ({ available: true, turns: [], excluded: 0 }) };
+  await pane.start(c);
+  c.protocol.handleMessage({ id: writes.at(-1).id, result: {} });
+  await settle();
+  c.protocol.handleMessage({ id: writes.at(-1).id, result: { thread: { id: 't' }, cwd: '/tmp' } });
+  await tick();
+  const { createQueued } = queueModule.exports;
+  c.queue.push(createQueued('ran once'), createQueued('later'));
+  pane.pump(c); await tick();
+  const start = writes.at(-1);
+  c.protocol.handleMessage({ id: start.id, result: { turn: { id: 'turn-1' } } });
+  c.protocol.handleMessage({ method: 'item/completed', params: { threadId: 't', item: { type: 'commandExecution', id: 'cmd', command: 'touch x', status: 'completed' } } });
+  c.protocol.handleMessage({ method: 'error', params: { threadId: 't', willRetry: false, error: { message: 'stream failed' } } });
+  await tick();
+  assert.deepEqual(c.queue.map(entry => entry.text), ['later']);
+  assert.equal(c.queueHeld, true);
+  assert.equal(writes.filter(w => w.method === 'turn/start').length, 1);
+});

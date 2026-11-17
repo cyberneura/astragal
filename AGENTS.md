@@ -281,7 +281,10 @@ stream-json / app-server の共通エンジンと Markdown 描画のコピー。
   送信が `revision` を書き換え、前のターンのコマンドが貼られうる)。プロトコルは書き込みの失敗や Codex の
   `turn/start` の拒否を `send()` の reject ではなく「result を出さずに idle に戻る」で返すので、`dispatch` が
   `inFlight` を置き、result の push で消し、idle 後の macrotask でまだ残っていれば始まらなかったターンとして
-  扱う (列の項目を戻して保留)。ターミナルの共有範囲は実際に送る時点で取る。
+  扱う。列は保留にし、項目を列に戻すのはエージェントが受け付けていない (`turnStarted` が来ていない) 時だけ
+  (受け付け後に Codex の error 通知で終わったターンはコマンドを実行済みかもしれず、Resume で再送すると二重に実行する)。
+  `turnStarted` は Beckwell のコピーに足した host のコールバック (Claude は stdin への書き込み成功、Codex は
+  `turn/start` の応答)ターミナルの共有範囲は実際に送る時点で取る。
   Stop (`interrupt`) と New chat / 再起動 (`restart`。Codex の Stop 後の復旧もここを通る) は `queueHeld` を立て、
   Resume か入力欄からの直接送信で解く。空の列に積む時も解く。列が残っている間 (保留でなければ) は直接送らずに
   後ろへ積む (先に積んだ指示を追い越さない)。送れなかった (Follow で cwd が不明等) ら先頭に戻して保留にする

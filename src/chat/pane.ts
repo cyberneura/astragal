@@ -47,7 +47,7 @@ interface Conversation {
   // without a result, so the idle callback checks this.
   inFlight: InFlight | null;
 }
-interface InFlight { fail(error?: unknown): void }
+interface InFlight { started: boolean; fail(error?: unknown): void }
 const conversations = new Map<number, Conversation>();
 let config: AppConfig;
 let currentSession: () => Session | undefined;
@@ -314,6 +314,7 @@ async function start(c: Conversation, resume: string | null = null): Promise<voi
       catch (e) { if (live()) { c.ready = false; c.busy = false; note(c, String(e), true); } return false; }
     },
     setBusy(busy) { if (!live()) return; c.busy = busy; if (!busy) afterIdle(c); scheduleRender(); },
+    turnStarted() { if (live() && c.inFlight) c.inFlight.started = true; },
     setReady(ready) { if (!live()) return; c.ready = ready; if (ready) afterIdle(c); scheduleRender(); },
     setSession(session) { if (!live()) return; c.agentSessionId = session?.sessionId || null; if (session) note(c, `${session.model} · ${session.detail}`); },
     setUsage(usage) { if (!live()) return; c.usage = usage ?? ""; scheduleRender(); },
@@ -372,14 +373,16 @@ function dispatch(c: Conversation, request: string, onFailed?: () => void): Prom
   note(c, `Shared ${context.turns.length} completed turns; ${context.excluded} excluded.`);
   c.busy = true;
   scheduleRender();
-  // A turn that did not start keeps its queued message (onFailed) and holds the rest
-  // of the queue: later instructions usually depend on the one that failed.
+  // A failed turn holds the rest of the queue: later instructions usually depend on
+  // it. Only a message the agent never accepted goes back to the queue (onFailed);
+  // one that started may already have run commands and must not be resent.
   const record: InFlight = {
+    started: false,
     fail(error?: unknown) {
       if (c.inFlight !== record || c.stopped || c.protocol !== protocol || c.process !== process) return;
       c.inFlight = null; c.busy = false; c.queueHeld = true;
       if (error !== undefined) note(c, String(error), true);
-      onFailed?.();
+      if (!record.started) onFailed?.();
       scheduleRender();
     },
   };
@@ -394,7 +397,8 @@ function afterIdle(c: Conversation): void {
   const record = c.inFlight;
   if (!record && !c.queue.length) return;
   setTimeout(() => {
-    // Still no result for the dispatched turn: it never started.
+    // Idle without a result: the turn was rejected, could not be written, or failed
+    // (e.g. a Codex error notification). `fail` re-queues only the first two.
     if (record && c.inFlight === record && !c.busy) record.fail();
     pump(c);
   }, 0);

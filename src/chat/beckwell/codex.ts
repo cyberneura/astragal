@@ -414,6 +414,7 @@ export function createCodexProtocol(host: ChatHost, options: ProtocolOptions): C
         { threadId, input: [{ type: 'text', text, text_elements: [] }], ...(options?.cwd ? { cwd: options.cwd } : {}) },
         {
           onResult: (result) => {
+            host.turnStarted?.();
             if (options?.cwd) {
               threadCwd = options.cwd;
               host.setWorkingDirectory(options.cwd);
