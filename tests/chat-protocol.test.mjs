@@ -115,7 +115,7 @@ function paneFixture(invoke) {
     },
   });
   const pane = module.exports.testPane;
-  const c = { session: { id: 1 }, provider: 'claude', cwd: '/tmp', items: [], process: null, stopped: false, starting: false, ready: false, busy: false, revision: 1, interrupted: false, autoPaste: false, queue: [], queueHeld: false, writeFailures: 0 };
+  const c = { session: { id: 1 }, provider: 'claude', cwd: '/tmp', items: [], process: null, stopped: false, starting: false, ready: false, busy: false, revision: 1, interrupted: false, autoPaste: false, queue: [], queueHeld: false, inFlight: null };
   pane.conversations.set(1, c);
   return { pane, c };
 }
@@ -358,4 +358,27 @@ test('a queued message whose write fails is restored and the queue is held', asy
   assert.deepEqual(c.queue.map(entry => entry.text), ['keep me']);
   assert.equal(c.queueHeld, true);
   assert.equal(c.busy, false);
+});
+
+test('a queued message rejected by Codex turn/start is restored and later messages wait', async () => {
+  const writes = [];
+  const { pane, c } = paneFixture(async (cmd, args) => { if (cmd === 'agent_write') writes.push(JSON.parse(args.line)); });
+  pane.configure({ agent_chat: { blacklist: [] } });
+  c.provider = 'codex'; c.turns = 0;
+  c.session.context = { revision: 1, snapshot: () => ({ available: true, turns: [], excluded: 0 }) };
+  await pane.start(c);
+  c.protocol.handleMessage({ id: writes.at(-1).id, result: {} });
+  await settle();
+  c.protocol.handleMessage({ id: writes.at(-1).id, result: { thread: { id: 't' }, cwd: '/tmp' } });
+  await tick();
+  const { createQueued } = queueModule.exports;
+  c.queue.push(createQueued('rejected'), createQueued('later'));
+  pane.pump(c); await tick();
+  const start = writes.at(-1);
+  assert.equal(start.method, 'turn/start');
+  c.protocol.handleMessage({ id: start.id, error: { message: 'Directory does not exist' } });
+  await tick();
+  assert.deepEqual(c.queue.map(entry => entry.text), ['rejected', 'later']);
+  assert.equal(c.queueHeld, true);
+  assert.equal(writes.filter(w => w.method === 'turn/start').length, 1);
 });

@@ -42,10 +42,12 @@ interface Conversation {
   queue: QueuedMessage[];
   // Set by Stop and New chat so the queue does not start on its own.
   queueHeld: boolean;
-  // Counts failed agent writes. Protocols report a failed write by resolving
-  // send() rather than rejecting it, so dispatch compares this before and after.
-  writeFailures: number;
+  // The turn started by the last dispatch, until its result arrives. Protocols report
+  // a turn that never started (failed write, rejected turn/start) only by going idle
+  // without a result, so the idle callback checks this.
+  inFlight: InFlight | null;
 }
+interface InFlight { fail(error?: unknown): void }
 const conversations = new Map<number, Conversation>();
 let config: AppConfig;
 let currentSession: () => Session | undefined;
@@ -236,7 +238,7 @@ export async function initAgentChat(appConfig: AppConfig, getSession: () => Sess
   await win.listen<{ id: number; line: string }>("agent_stderr", ({ payload }) => { const c = byProcess(payload.id); if (c) note(c, payload.line, true); });
   await win.listen<{ id: number; code: number | null }>("agent_exit", ({ payload }) => {
     const c = byProcess(payload.id); if (!c) return;
-    c.ready = false; c.busy = false; c.stopped = true;
+    c.ready = false; c.busy = false; c.stopped = true; c.inFlight = null;
     note(c, `Agent exited (${payload.code ?? "unknown status"}). Use New chat to reconnect.`, true);
   });
   setInterval(() => {
@@ -273,7 +275,7 @@ export function syncAgentChat(): void {
       items: [], process: null, protocol: null, agentSessionId: null, ready: false, busy: false, starting: false, stopped: false,
       draft: "", usage: "", revision: null, interrupted: false, command: null,
       turns: Math.max(0, Math.min(20, config.agent_chat.context_turns)), autoPaste: config.agent_chat.auto_paste, followDirectory: false,
-      queue: [], queueHeld: false, writeFailures: 0,
+      queue: [], queueHeld: false, inFlight: null,
     };
     conversations.set(session.id, c); void start(c);
   }
@@ -288,7 +290,7 @@ export function closeAgentChat(session: Session): void {
 async function restart(c: Conversation, resume: string | null = null): Promise<void> {
   if (c.starting) return;
   c.starting = true; c.queueHeld = true; scheduleRender();
-  c.stopped = true; c.ready = false; c.busy = false; c.command = null; c.revision = null;
+  c.stopped = true; c.ready = false; c.busy = false; c.command = null; c.revision = null; c.inFlight = null;
   const old = c.process; c.process = null;
   if (old !== null) {
     try { await invoke("agent_stop", { id: old }); } catch (e) { c.starting = false; note(c, String(e), true); return; }
@@ -303,16 +305,16 @@ async function start(c: Conversation, resume: string | null = null): Promise<voi
   const live = () => c.process === id && !c.stopped && conversations.has(c.session.id);
   const host: ChatHost = {
     get items() { return c.items; },
-    push(item) { if (!live()) return; c.items.push(item); if (item.kind === "result" && /^(success|completed)\b/.test(item.summary)) queueMicrotask(() => { if (live()) complete(c, item.finalText); }); scheduleRender(); },
+    push(item) { if (!live()) return; c.items.push(item); if (item.kind === "result") c.inFlight = null; if (item.kind === "result" && /^(success|completed)\b/.test(item.summary)) queueMicrotask(() => { if (live()) complete(c, item.finalText); }); scheduleRender(); },
     note(text, level) { if (!live()) return; note(c, text, level === "error"); },
     scrollToBottom: scheduleRender,
     async write(payload) {
       if (!live()) return false;
       try { await invoke("agent_write", { id, line: JSON.stringify(payload) }); return live(); }
-      catch (e) { if (live()) { c.ready = false; c.busy = false; c.writeFailures++; note(c, String(e), true); } return false; }
+      catch (e) { if (live()) { c.ready = false; c.busy = false; note(c, String(e), true); } return false; }
     },
-    setBusy(busy) { if (!live()) return; c.busy = busy; if (!busy) schedulePump(c); scheduleRender(); },
-    setReady(ready) { if (!live()) return; c.ready = ready; if (ready) schedulePump(c); scheduleRender(); },
+    setBusy(busy) { if (!live()) return; c.busy = busy; if (!busy) afterIdle(c); scheduleRender(); },
+    setReady(ready) { if (!live()) return; c.ready = ready; if (ready) afterIdle(c); scheduleRender(); },
     setSession(session) { if (!live()) return; c.agentSessionId = session?.sessionId || null; if (session) note(c, `${session.model} · ${session.detail}`); },
     setUsage(usage) { if (!live()) return; c.usage = usage ?? ""; scheduleRender(); },
     setWorkingDirectory(value) { if (!live()) return; c.cwd = value; scheduleRender(); },
@@ -364,28 +366,38 @@ function dispatch(c: Conversation, request: string, onFailed?: () => void): Prom
   }
   const protocol = c.protocol;
   const process = c.process;
-  const failures = c.writeFailures;
   const context = c.session.context.snapshot(c.turns, config.agent_chat.blacklist);
   c.revision = c.session.context.revision; c.command = null; c.interrupted = false;
   c.items.push({ kind: "user", text: request });
   note(c, `Shared ${context.turns.length} completed turns; ${context.excluded} excluded.`);
   c.busy = true;
   scheduleRender();
-  const failed = (error?: unknown) => {
-    if (c.stopped || c.protocol !== protocol || c.process !== process) return;
-    c.busy = false; c.queueHeld = true;
-    if (error !== undefined) note(c, String(error), true);
-    onFailed?.();
-    scheduleRender();
+  // A turn that did not start keeps its queued message (onFailed) and holds the rest
+  // of the queue: later instructions usually depend on the one that failed.
+  const record: InFlight = {
+    fail(error?: unknown) {
+      if (c.inFlight !== record || c.stopped || c.protocol !== protocol || c.process !== process) return;
+      c.inFlight = null; c.busy = false; c.queueHeld = true;
+      if (error !== undefined) note(c, String(error), true);
+      onFailed?.();
+      scheduleRender();
+    },
   };
+  c.inFlight = record;
   return protocol.send(chatPrompt(request, context), protocol.supportsWorkingDirectory ? { cwd: c.cwd } : undefined)
-    .then(() => { if (c.writeFailures !== failures) failed(); }, failed);
+    .then(() => {}, (e) => record.fail(e));
 }
 // A macrotask, not a microtask: Claude reports idle before it pushes the result, and
 // the result's writeback (`complete`) runs in a microtask that must finish before the
 // next queued message resets the turn's revision.
-function schedulePump(c: Conversation): void {
-  if (c.queue.length) setTimeout(() => pump(c), 0);
+function afterIdle(c: Conversation): void {
+  const record = c.inFlight;
+  if (!record && !c.queue.length) return;
+  setTimeout(() => {
+    // Still no result for the dispatched turn: it never started.
+    if (record && c.inFlight === record && !c.busy) record.fail();
+    pump(c);
+  }, 0);
 }
 function pump(c: Conversation): void {
   if (!conversations.has(c.session.id)) return;
