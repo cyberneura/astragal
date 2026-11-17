@@ -35,6 +35,12 @@ Codex process recovery after Stop resumes the existing thread and keeps the visi
 transcript. `ProtocolOptions.replayHistory: false` suppresses server history replay
 when the host already retains those items; explicit New chat starts a fresh thread.
 
+`src/chat/queue.ts` ports Beckwell's message queue helpers
+(`src/lib/chat/queue.ts`, revision `2953cbb9184d24990d974d3baf384c651646f77d`).
+The pane renders the queue with DOM instead of Beckwell's `MessageQueue.svelte`
+and keeps the same rules: queue while busy, hold after Stop / New chat, resume
+with Resume or a direct send, and drop messages that were emptied.
+
 When updating the vendored files, preserve these adaptations, run `pnpm test:chat`
 and `pnpm build`, and exercise both providers. The optional live tests
 `node tests/agent-smoke.mjs claude` and `node tests/agent-smoke.mjs codex` send a

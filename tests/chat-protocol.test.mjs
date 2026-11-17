@@ -100,19 +100,22 @@ function commonjs(source) {
 }
 const contextModule = { exports: {} };
 vm.runInNewContext(commonjs(contextSource), { exports: contextModule.exports });
+const queueModule = { exports: {} };
+vm.runInNewContext(commonjs(await fs.readFile(new URL('../src/chat/queue.ts', import.meta.url), 'utf8')), { exports: queueModule.exports });
 function paneFixture(invoke) {
   const module = { exports: {} };
-  vm.runInNewContext(commonjs(paneSource + '\nexport const testPane = { start, restart, interrupt, respondPermission, answerQuestion, complete, insertCode, conversations, select(c) { visible = true; currentSession = () => c.session; } };'), {
+  vm.runInNewContext(commonjs(paneSource + '\nexport const testPane = { start, restart, interrupt, respondPermission, answerQuestion, complete, insertCode, pump, conversations, select(c) { visible = true; currentSession = () => c.session; }, configure(value) { config = value; } };'), {
     exports: module.exports, queueMicrotask, requestAnimationFrame() {},
     require(name) {
       if (name === '@tauri-apps/api/core') return { invoke };
       if (name === './beckwell') return { createProtocol };
       if (name === './context') return contextModule.exports;
+      if (name === './queue') return queueModule.exports;
       return {};
     },
   });
   const pane = module.exports.testPane;
-  const c = { session: { id: 1 }, provider: 'claude', cwd: '/tmp', items: [], process: null, stopped: false, starting: false, ready: false, busy: false, revision: 1, interrupted: false, autoPaste: false };
+  const c = { session: { id: 1 }, provider: 'claude', cwd: '/tmp', items: [], process: null, stopped: false, starting: false, ready: false, busy: false, revision: 1, interrupted: false, autoPaste: false, queue: [], queueHeld: false };
   pane.conversations.set(1, c);
   return { pane, c };
 }
@@ -274,4 +277,45 @@ test('Codex interrupt recovery resumes the thread and preserves the visible tran
   await pane.restart(c);
   await handshake('thread/start');
   assert.ok(!c.items.includes(user));
+});
+
+test('queued messages are sent one at a time after each turn and wait after Stop', async () => {
+  const sent = [];
+  const { pane, c } = paneFixture(async (cmd, args) => {
+    if (cmd !== 'agent_write') return;
+    const payload = JSON.parse(args.line);
+    if (payload.type === 'user') sent.push(payload.message.content);
+  });
+  pane.configure({ agent_chat: { blacklist: [] } });
+  c.turns = 0;
+  c.session.context = { revision: 1, snapshot: () => ({ available: true, turns: [], excluded: 0 }) };
+  await pane.start(c); await settle();
+  const { createQueued } = queueModule.exports;
+  c.queue.push(createQueued('first'), createQueued('  '), createQueued('second'));
+
+  // Act: the first queued message starts a turn; the rest wait for it to finish.
+  pane.pump(c); await settle();
+  assert.equal(sent.length, 1);
+  assert.ok(sent[0].includes('first'));
+  assert.equal(c.busy, true);
+  pane.pump(c); await settle();
+  assert.equal(sent.length, 1);
+  c.protocol.handleMessage({ type: 'result', subtype: 'success', result: 'done' });
+  await settle();
+
+  // Assert: the emptied message is dropped and the next one is sent.
+  assert.equal(sent.length, 2);
+  assert.ok(sent[1].includes('second'));
+  assert.equal(c.queue.length, 0);
+
+  // Stop holds the queue so the next message does not start on its own.
+  c.queue.push(createQueued('third'));
+  await pane.interrupt(c);
+  c.protocol.handleMessage({ type: 'result', subtype: 'error_during_execution' });
+  await settle();
+  assert.equal(c.queueHeld, true);
+  assert.equal(sent.length, 2);
+  assert.equal(c.queue.length, 1);
+  c.queueHeld = false; pane.pump(c); await settle();
+  assert.equal(sent.length, 3);
 });

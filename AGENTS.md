@@ -273,6 +273,16 @@ stream-json / app-server の共通エンジンと Markdown 描画のコピー。
   プロトコルは送信失敗時に pending へ戻すだけなので、UI 側での二重送信防止が必要
 - pane を閉じてもプロセスは残す。タブを閉じる・New chat・アプリ終了・フロントの
   再初期化で終了させる。SIGTERM の後に期限付き SIGKILL へ進む
+- 応答中 (`busy`、または起動中) に送った文は `Conversation.queue` に積み (`src/chat/queue.ts`、Beckwell の
+  `src/lib/chat/queue.ts` の移植)、入力欄の上に一覧を出す。送られるまで textarea で書き換えられ、↑ で 1 つ上に
+  空行を挟んで連結、× で取り除く。host の `setBusy(false)` / `setReady(true)` から microtask で `pump` し、
+  `canDispatch` が通れば先頭を 1 つだけ `dispatch` (直接送るのと同じ処理) に渡す。microtask にしているのは、
+  同じターンの `complete` (書き戻し) を先に済ませるため。ターミナルの共有範囲は実際に送る時点で取る。
+  Stop (`interrupt`) と New chat / 再起動 (`restart`。Codex の Stop 後の復旧もここを通る) は `queueHeld` を立て、
+  Resume か入力欄からの直接送信で解く。空の列に積む時も解く。列が残っている間 (保留でなければ) は直接送らずに
+  後ろへ積む (先に積んだ指示を追い越さない)。送れなかった (Follow で cwd が不明等) ら先頭に戻して保留にする
+  (ループで再送しない)。列の行は id ごとに使い回し、位置が違う時だけ動かす (編集中の textarea のフォーカスを
+  落とさない)。列は画面の状態だけで、タブを閉じると消える
 - `pnpm test:chat` は共有範囲と書き戻しのテスト。`tests/agent-smoke.mjs` は実 CLI に合成の
   接続確認だけを送る任意テスト。ネットワークと通常の資格情報へのアクセスが必要
 
