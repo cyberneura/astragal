@@ -91,7 +91,8 @@ npm 側は `package.json` の `dependencies` だけ (devDependencies は配布�
   登録し直しと各ウインドウへの通知が要る
 - `settings_*` のコマンドは `require_settings_window` で Settings ウインドウからの呼び出しに限る
 - override のテスト実行 (`settings_test_override`) はキーの数だけ返す。マージ結果が使えない時も
-  serde のメッセージ (値を含みうる) は出さずキーの名前だけ出す
+  serde のメッセージ (値を含みうる) は出さずキーの名前だけ出す。実行の失敗も `override_failure` で
+  固定の文言 + 終了コードにする (元のエラーはコマンド全文と子の stderr を含み、値が混ざりうる)
 - 確認ダイアログは `window.confirm` ではなく自前の `<dialog>` (webview によって confirm が効かない)
 - Rust のテストは `settings.rs` の単体テスト (往復・override のキーを書き戻さない・API キーの keep / set / clear・
   `.bak`・読めないファイル・symlink)。フロントの純粋な部品は `pnpm test:settings`。

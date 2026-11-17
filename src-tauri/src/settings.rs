@@ -587,9 +587,7 @@ pub fn test_override(path: &Path, command: &str) -> Result<usize, String> {
     if command.is_empty() {
         return Err("Enter a command first.".to_string());
     }
-    // エラーはコマンド全文を含む (`echo` で YAML を出すコマンドなら値そのもの) ので、伏せて返す
-    let overrides =
-        config::fetch_override(command).map_err(|e| e.replace(command, "<the command>"))?;
+    let overrides = config::fetch_override(command).map_err(|e| override_failure(&e))?;
     let keys = config::leaf_paths(&overrides);
     let mut doc = match read_local(path) {
         Ok((_, doc, _)) => doc,
@@ -605,6 +603,39 @@ pub fn test_override(path: &Path, command: &str) -> Result<usize, String> {
         ));
     }
     Ok(keys.len())
+}
+
+/// override の失敗を、値を含まない固定の文言にする。
+///
+/// `fetch_override` のエラーはコマンド全文 (`echo` で YAML を出すコマンドなら値そのもの) と
+/// 子プロセスの stderr (取得した YAML をログに出すヘルパーもありうる) を含むので、webview には
+/// 渡さず、どの段階で失敗したかと終了コードだけを返す。詳しくはターミナルで実行してもらう。
+fn override_failure(error: &str) -> String {
+    let reason = if error.contains("unbalanced quotes") {
+        "Could not split the command line (unbalanced quotes?).".to_string()
+    } else if error.contains("Failed to run") {
+        "Could not start the command. Check that the program exists (on PATH or as an \
+         absolute path)."
+            .to_string()
+    } else if error.contains("timed out") {
+        "The command timed out (it may be waiting for 1Password or another approval).".to_string()
+    } else if error.contains("exited with an error") {
+        let code = error
+            .split_once("(code=")
+            .and_then(|(_, rest)| rest.split_once(')'))
+            .map(|(code, _)| code.trim_start_matches("Some(").to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        format!("The command failed (exit code {code}).")
+    } else if error.contains("produced no output") {
+        "The command printed nothing.".to_string()
+    } else if error.contains("not valid UTF-8") {
+        "The command printed something that is not UTF-8 text.".to_string()
+    } else if error.contains("Failed to parse YAML") || error.contains("is not a YAML mapping") {
+        "The command's output is not a YAML mapping.".to_string()
+    } else {
+        "The command failed.".to_string()
+    };
+    format!("{reason} Run it in a terminal to see its output.")
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -934,6 +965,21 @@ mod tests {
 
         // Assert
         assert!(!message.contains("sk-secret"), "{message}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn override_test_failures_do_not_show_the_child_output() {
+        // Arrange
+        let path = temp_dir("override-stderr").join("config.yaml");
+
+        // Act
+        let message = test_override(&path, "/bin/sh -c 'echo sk-secret >&2; exit 3'")
+            .expect_err("should fail");
+
+        // Assert
+        assert!(!message.contains("sk-secret"), "{message}");
+        assert!(message.contains("exit code 3"), "{message}");
     }
 
     #[test]
