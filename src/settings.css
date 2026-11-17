@@ -1,0 +1,227 @@
+/* ── Settings window (settings.html / settings.ts) ───────────────────────── */
+
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #e6e6e6;
+  background: #111111;
+  color-scheme: dark;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+#settings {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px 24px;
+}
+
+#settings-footer {
+  border-top: 1px solid #2a2a2a;
+  padding: 8px 20px 12px;
+  background: #161616;
+}
+
+#settings-status {
+  min-height: 1.4em;
+  margin-bottom: 6px;
+  color: #9a9a9a;
+  white-space: pre-wrap;
+}
+
+#settings-status[data-kind="error"] { color: #ff7b72; }
+#settings-status[data-kind="ok"] { color: #7ee787; }
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.spacer { flex: 1; }
+
+h2 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 20px 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+section:first-of-type h2 { margin-top: 8px; }
+
+.settings-path, .section-note, .field-help {
+  color: #9a9a9a;
+}
+
+.section-note { margin-bottom: 6px; }
+
+code, pre {
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: #1d1d1d;
+  border: 1px solid #2a2a2a;
+  border-radius: 4px;
+  padding: 1px 4px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+pre { padding: 6px 8px; white-space: pre-wrap; flex: 1; }
+
+.field {
+  padding: 8px 0;
+}
+
+.field-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.field-label { font-weight: 500; }
+
+.field-help { font-size: 12px; margin: 1px 0 4px; }
+
+.field-error {
+  color: #ff7b72;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.field-error:empty { display: none; }
+
+.field.invalid input, .field.invalid textarea { border-color: #ff7b72; }
+
+.field-locked {
+  font-size: 12px;
+  color: #e3b341;
+  margin-top: 4px;
+}
+
+input[type="text"], input[type="number"], input[type="password"], select, textarea {
+  font: inherit;
+  color: inherit;
+  background: #1d1d1d;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 4px 6px;
+  width: 100%;
+  max-width: 520px;
+}
+
+.row input[type="text"], .row input[type="password"] { flex: 1; width: auto; }
+
+input[type="number"] { max-width: 160px; }
+
+textarea {
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+  resize: vertical;
+}
+
+input:disabled, select:disabled, textarea:disabled { opacity: 0.55; }
+
+input:focus, select:focus, textarea:focus {
+  outline: 2px solid #3d6fd9;
+  outline-offset: -1px;
+}
+
+input.hotkey { cursor: pointer; max-width: 320px; }
+
+.checkbox, .radio {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.radio { display: flex; margin: 2px 0; }
+
+button {
+  font: inherit;
+  color: inherit;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 5px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) { background: #333; }
+button:disabled { opacity: 0.45; cursor: default; }
+
+button.primary { background: #2f5bb7; border-color: #3d6fd9; }
+button.primary:hover:not(:disabled) { background: #3a68c8; }
+
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #6ea8ff;
+  font-size: 12px;
+}
+
+.secret-status { margin-bottom: 4px; }
+
+.secret-panel {
+  margin: 6px 0 0 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 560px;
+}
+
+.settings-unreadable pre { margin: 8px 0; color: #ff7b72; }
+
+.settings-text-page {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+}
+
+textarea.settings-text {
+  flex: 1;
+  max-width: none;
+  min-height: 360px;
+  resize: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.settings-dialog {
+  margin: auto;
+  max-width: 440px;
+  padding: 16px;
+  color: inherit;
+  background: #1d1d1d;
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+}
+
+.settings-dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+
+.settings-dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+/* display: flex above would otherwise win over the hidden attribute */
+[hidden] { display: none !important; }

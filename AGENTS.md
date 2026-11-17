@@ -32,13 +32,14 @@ public リポジトリなので、**README・UI 文字列・エラーメッセ�
 | `src/search.ts` | Cmd+F の検索バー (xterm-addon-search)。ウインドウに 1 つで、アクティブなタブを検索する |
 | `src/main.ts` / `src/small.ts` | メインウインドウ / 吹き出しの入口 |
 | `src/about.ts` | トレイメニューの About から開くウインドウ。バージョンの下にビルド日時 (UTC) を出す (`app_info` の `build_date`) |
+| `src/settings.ts` / `src/settings-fields.ts` / `src-tauri/src/settings.rs` | Settings ウインドウ (フォーム・純粋な部品 / 設定ファイルの読み書きと検査) |
 | `src/licenses.ts` | トレイメニューの Third-Party Licenses から開くウインドウ (`THIRD-PARTY-NOTICES.txt` を表示) |
 | `src-tauri/src/crash_log.rs` | 落ちた理由の記録。panic hook で `panic.log` に書き、macOS では下の例外の guard を入れる |
 | `src-tauri/src/objc_exception.rs` / `src-tauri/src/macos/exception_guard.m` | macOS: AppKit がイベント処理中に投げた Objective-C 例外で落ちないように NSApplication と NSWindow の `-sendEvent:` を包む |
 | `resources/app-icons/` | アイコンのマスター素材と `generate.py` / `inspect_icns.py` |
 
 常駐ウインドウは 2 つある。`main` (タブ付き) と `small` (メニューバーアイコン直下に出る
-吹き出し)。挙動が違うので、片方だけ直して済ませないこと。`about` と `licenses` は開くたびに作り、
+吹き出し)。挙動が違うので、片方だけ直して済ませないこと。`about` / `licenses` / `settings` は開くたびに作り、
 閉じると破棄される。
 
 ## ビルド日時の表示 (src-tauri/build.rs)
@@ -61,6 +62,41 @@ macOS のアプリメニューの About も標準パネルではなく、トレ�
 落ちる)。Rust 側は cargo-about で、`src-tauri/about.toml` の `targets` で配布ターゲット
 (mac / Windows) だけに絞っている。cargo-about は `--features cli` を付けないとバイナリが入らない。
 npm 側は `package.json` の `dependencies` だけ (devDependencies は配布物に入らない)。
+
+## Settings ウインドウ (CYBERNEURA-DEV-1297)
+
+トレイの右クリックメニューと macOS のアプリメニュー (Cmd+,) の Settings… から開く。
+`about` / `licenses` と同じく開くたびに作り、閉じると破棄する。Flashcap の Preferences が手本。
+設計上の不変条件:
+
+- **GUI が扱うのはローカルのファイルだけ。** `config_override_command` の結果 (マージ後の値) を
+  webview に渡さない・ファイルに書かない。上書きされたキーは起動時の `config::load` が
+  `LoadedConfig.override_keys` (ドット区切りの葉) に記録し、GUI は読み取り専用にし、
+  `settings::build_document` は保存時にそのキーだけ「ファイルにあった値」を写し直す
+  (GUI が何を送ってきても書き戻さない)。override のキーは起動時のものなので、
+  コマンドを変えても再起動までは古い一覧のまま
+- **API キー (`ai.api_key` / `tab_summary.api_key`) は値を webview に渡さない。**
+  スナップショットでは空にして「ファイルにあるか / override か」だけを返し、保存は
+  `keep` / `set` / `clear` で受ける。テキスト編集 (`settings_read_text`) だけはファイルを
+  そのまま見せる (利用者が明示的に開いた時だけ読む)
+- 読めないファイル (YAML の誤り・未知のキー) は書かない。`save` は書く前に今のファイルを
+  読み直し、読めなければ断る。書く内容も起動時と同じ `parse_config` で読めることを確かめる
+- 保存は既定値と同じ値・null を落とした YAML を構造から書き直す (コメントは消える)。
+  `hotkeys.*` の null (= 無効) は落とすと既定のホットキーが戻るので空文字で書く。
+  ウインドウの `hide_on_blur` は main と small で既定が違うので、フロントが既定と同じなら null を送る
+- 書き込みは `WRITE_LOCK` で直列化し、同じディレクトリの一時ファイルから rename。symlink は
+  canonicalize した先を書く。`<name>.bak` は無い時だけ作る (= 初回の上書き前)。元の権限を引き継ぐ
+- 設定は起動時に 1 回だけ読む (`AppState.config` は不変) ので、反映は再起動 (`settings_restart`
+  = `AppHandle::restart`)。ライブ反映にするなら `AppState.config` を Mutex にして、ホットキーの
+  登録し直しと各ウインドウへの通知が要る
+- `settings_*` のコマンドは `require_settings_window` で Settings ウインドウからの呼び出しに限る
+- override のテスト実行 (`settings_test_override`) はキーの数だけ返す。マージ結果が使えない時も
+  serde のメッセージ (値を含みうる) は出さずキーの名前だけ出す
+- 確認ダイアログは `window.confirm` ではなく自前の `<dialog>` (webview によって confirm が効かない)
+- Rust のテストは `settings.rs` の単体テスト (往復・override のキーを書き戻さない・API キーの keep / set / clear・
+  `.bak`・読めないファイル・symlink)。フロントの純粋な部品は `pnpm test:settings`。
+  **実機確認は未実施** (2026-11-17 時点)。このホストは GTK の .so が無く cargo test がリンクできないので、
+  config.rs と settings.rs を一時クレートに抜き出して回した
 
 ## キーバインド
 
@@ -92,6 +128,8 @@ Option が要る (Option+8 / Option+9) ので、`key` が文字として取れ�
 Cmd+F / Cmd+G / Cmd+K はネイティブメニューのアクセラレータに奪われない (Tauri の既定
 メニューに Find 系・Clear 系の項目が無い)。メニューを足す時にこれらを割り当てると、
 WebView までキーが届かなくなり検索やクリアが効かなくなる。
+アプリメニューの Settings… には Cmd+, を付けている (ターミナルのキーバインドでは使っていない。
+使うようにする時はこのアクセラレータを外す)。
 
 Cmd+K (Windows は Ctrl+Shift+K) は `terminal.clear()` で、シェルには何も送らない
 (iTerm2 の Clear Buffer と同じ。Ctrl+L と違ってスクロールバックも消える)。代替バッファ

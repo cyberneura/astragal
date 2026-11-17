@@ -8,6 +8,7 @@ mod mouse_integration;
 #[cfg(target_os = "macos")]
 mod objc_exception;
 mod remote_drop;
+mod settings;
 mod shell_integration;
 mod tab_summary;
 
@@ -739,6 +740,10 @@ const APP_MENU_HIDE_ID: &str = "app_hide";
 #[cfg(target_os = "macos")]
 const APP_MENU_ABOUT_ID: &str = "app_about";
 
+/// アプリメニューの Settings… 項目の id。トレイの "settings" と分ける理由は About と同じ。
+#[cfg(target_os = "macos")]
+const APP_MENU_SETTINGS_ID: &str = "app_settings";
+
 /// Tauri の既定のアプリメニュー (`Menu::default`) と同じ構成で、Hide と About を自前の項目に
 /// 差し替えたもの (macOS のみ)。
 ///
@@ -761,8 +766,14 @@ fn app_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     let hide = MenuItemBuilder::with_id(APP_MENU_HIDE_ID, format!("Hide {}", pkg_info.name))
         .accelerator("Cmd+H")
         .build(app)?;
+    // Cmd+, は macOS の設定画面の定番。ターミナルのキーバインドには使っていない
+    let settings = MenuItemBuilder::with_id(APP_MENU_SETTINGS_ID, "Settings…")
+        .accelerator("Cmd+,")
+        .build(app)?;
     let app_submenu = SubmenuBuilder::new(app, pkg_info.name.clone())
         .item(&about)
+        .separator()
+        .item(&settings)
         .separator()
         .item(&PredefinedMenuItem::services(app, None)?)
         .separator()
@@ -1236,6 +1247,116 @@ fn show_about_window(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+const SETTINGS_WINDOW: &str = "settings";
+
+/// Settings ウインドウを出す (settings.rs / src/settings.ts)。作り方と出し方は About と同じ
+/// (閉じると破棄、非表示で作って front の合図で出す)。
+fn show_settings_window(app: &AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window(SETTINGS_WINDOW) {
+        return present_auxiliary_window(&win);
+    }
+    tauri::WebviewWindowBuilder::new(
+        app,
+        SETTINGS_WINDOW,
+        tauri::WebviewUrl::App("settings.html".into()),
+    )
+    .title("Astragal Settings")
+    .inner_size(720.0, 760.0)
+    .min_inner_size(520.0, 400.0)
+    .theme(Some(tauri::Theme::Dark))
+    .background_color(tauri::window::Color(0x11, 0x11, 0x11, 0xff))
+    .visible(false)
+    .center()
+    .build()
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 設定ファイルを読み書きするコマンドは Settings ウインドウからだけ受け付ける
+/// (ターミナルのウインドウの webview から呼ばれる理由が無い)。
+fn require_settings_window(window: &WebviewWindow) -> Result<(), String> {
+    if window.label() == SETTINGS_WINDOW {
+        Ok(())
+    } else {
+        Err("Only the Settings window can change the config file".to_string())
+    }
+}
+
+#[tauri::command]
+fn settings_window_ready(app: AppHandle) -> Result<(), String> {
+    match app.get_webview_window(SETTINGS_WINDOW) {
+        Some(win) => present_auxiliary_window(&win),
+        None => Ok(()),
+    }
+}
+
+/// Settings を開いた時の内容。ファイルは毎回読み直す。上書きされたキーは起動時に読んだもの
+#[tauri::command]
+fn settings_snapshot(window: WebviewWindow) -> Result<settings::SettingsSnapshot, String> {
+    require_settings_window(&window)?;
+    let state = window.state::<AppState>();
+    Ok(settings::snapshot(
+        &state.config.path,
+        &state.config.override_keys,
+    ))
+}
+
+#[tauri::command]
+fn settings_save(
+    window: WebviewWindow,
+    request: settings::SaveRequest,
+) -> Result<settings::SaveOutcome, settings::SaveError> {
+    require_settings_window(&window)?;
+    let state = window.state::<AppState>();
+    settings::save(&state.config.path, &request, &state.config.override_keys)
+}
+
+/// テキスト編集を開いた時だけ呼ぶ (ファイルに直接書いた API キーもそのまま見える)
+#[tauri::command]
+fn settings_read_text(window: WebviewWindow) -> Result<String, String> {
+    require_settings_window(&window)?;
+    settings::read_text(&window.state::<AppState>().config.path)
+}
+
+#[tauri::command]
+fn settings_save_text(
+    window: WebviewWindow,
+    text: String,
+) -> Result<settings::SaveOutcome, settings::SaveError> {
+    require_settings_window(&window)?;
+    settings::save_text(&window.state::<AppState>().config.path, &text)
+}
+
+/// config_override_command を試しに実行する。返すのは上書きするキーの数だけ。
+/// 1Password の承認待ちで数十秒かかることがあるので、ブロッキングのスレッドで動かす
+#[tauri::command]
+async fn settings_test_override(window: WebviewWindow, command: String) -> Result<usize, String> {
+    require_settings_window(&window)?;
+    let path = window.state::<AppState>().config.path.clone();
+    tauri::async_runtime::spawn_blocking(move || settings::test_override(&path, &command))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 設定ファイルを OS の既定のアプリで開く (テキストエディタへの逃げ道)
+#[tauri::command]
+fn settings_open_file(window: WebviewWindow) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    require_settings_window(&window)?;
+    let path = window.state::<AppState>().config.path.clone();
+    window
+        .opener()
+        .open_path(path.display().to_string(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+/// 設定は起動時に一度だけ読むので、反映には再起動が要る。開いているタブは閉じる
+#[tauri::command]
+fn settings_restart(window: WebviewWindow) -> Result<(), String> {
+    require_settings_window(&window)?;
+    window.app_handle().restart()
+}
+
 /// About / Third-Party Licenses のような、開くたびに作る補助ウインドウを前面に出す。
 fn present_auxiliary_window(win: &WebviewWindow) -> Result<(), String> {
     let _ = move_to_cursor_monitor(win);
@@ -1311,6 +1432,7 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let toggle = MenuItemBuilder::with_id("toggle", "Show Window").build(app)?;
     let separator = tauri::menu::PredefinedMenuItem::separator(app)?;
     let about = MenuItemBuilder::with_id("about", "About Astragal").build(app)?;
+    let settings = MenuItemBuilder::with_id("settings", "Settings…").build(app)?;
     let licenses = MenuItemBuilder::with_id("licenses", "Third-Party Licenses").build(app)?;
     let mouse_integration = CheckMenuItemBuilder::with_id(
         mouse_integration::TRAY_MENU_ID,
@@ -1333,6 +1455,7 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .item(&separator)
         .item(&mouse_integration)
         .separator()
+        .item(&settings)
         .item(&autostart);
     #[cfg(target_os = "macos")]
     let menu = menu.item(&install_cli);
@@ -1374,6 +1497,11 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             "about" => {
                 if let Err(e) = show_about_window(app) {
                     eprintln!("astragal: failed to show the about window: {e}");
+                }
+            }
+            "settings" => {
+                if let Err(e) = show_settings_window(app) {
+                    eprintln!("astragal: failed to show the settings window: {e}");
                 }
             }
             "licenses" => {
@@ -1861,6 +1989,11 @@ pub fn run() {
                     eprintln!("astragal: failed to show the about window: {e}");
                 }
             }
+            APP_MENU_SETTINGS_ID => {
+                if let Err(e) = show_settings_window(app) {
+                    eprintln!("astragal: failed to show the settings window: {e}");
+                }
+            }
             _ => {}
         });
     builder
@@ -1994,6 +2127,14 @@ pub fn run() {
             about_window_ready,
             third_party_notices,
             licenses_window_ready,
+            settings_window_ready,
+            settings_snapshot,
+            settings_save,
+            settings_read_text,
+            settings_save_text,
+            settings_test_override,
+            settings_open_file,
+            settings_restart,
             request_small_anchor,
             create_terminal,
             pending_launches,
