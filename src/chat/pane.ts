@@ -42,6 +42,9 @@ interface Conversation {
   queue: QueuedMessage[];
   // Set by Stop and New chat so the queue does not start on its own.
   queueHeld: boolean;
+  // Counts failed agent writes. Protocols report a failed write by resolving
+  // send() rather than rejecting it, so dispatch compares this before and after.
+  writeFailures: number;
 }
 const conversations = new Map<number, Conversation>();
 let config: AppConfig;
@@ -270,7 +273,7 @@ export function syncAgentChat(): void {
       items: [], process: null, protocol: null, agentSessionId: null, ready: false, busy: false, starting: false, stopped: false,
       draft: "", usage: "", revision: null, interrupted: false, command: null,
       turns: Math.max(0, Math.min(20, config.agent_chat.context_turns)), autoPaste: config.agent_chat.auto_paste, followDirectory: false,
-      queue: [], queueHeld: false,
+      queue: [], queueHeld: false, writeFailures: 0,
     };
     conversations.set(session.id, c); void start(c);
   }
@@ -306,7 +309,7 @@ async function start(c: Conversation, resume: string | null = null): Promise<voi
     async write(payload) {
       if (!live()) return false;
       try { await invoke("agent_write", { id, line: JSON.stringify(payload) }); return live(); }
-      catch (e) { if (live()) { c.ready = false; c.busy = false; note(c, String(e), true); } return false; }
+      catch (e) { if (live()) { c.ready = false; c.busy = false; c.writeFailures++; note(c, String(e), true); } return false; }
     },
     setBusy(busy) { if (!live()) return; c.busy = busy; if (!busy) schedulePump(c); scheduleRender(); },
     setReady(ready) { if (!live()) return; c.ready = ready; if (ready) schedulePump(c); scheduleRender(); },
@@ -361,23 +364,28 @@ function dispatch(c: Conversation, request: string, onFailed?: () => void): Prom
   }
   const protocol = c.protocol;
   const process = c.process;
+  const failures = c.writeFailures;
   const context = c.session.context.snapshot(c.turns, config.agent_chat.blacklist);
   c.revision = c.session.context.revision; c.command = null; c.interrupted = false;
   c.items.push({ kind: "user", text: request });
   note(c, `Shared ${context.turns.length} completed turns; ${context.excluded} excluded.`);
   c.busy = true;
   scheduleRender();
+  const failed = (error?: unknown) => {
+    if (c.stopped || c.protocol !== protocol || c.process !== process) return;
+    c.busy = false; c.queueHeld = true;
+    if (error !== undefined) note(c, String(error), true);
+    onFailed?.();
+    scheduleRender();
+  };
   return protocol.send(chatPrompt(request, context), protocol.supportsWorkingDirectory ? { cwd: c.cwd } : undefined)
-    .catch((e) => {
-      if (c.stopped || c.protocol !== protocol || c.process !== process) return;
-      c.busy = false; c.queueHeld = true; note(c, String(e), true);
-      onFailed?.();
-      scheduleRender();
-    });
+    .then(() => { if (c.writeFailures !== failures) failed(); }, failed);
 }
-// Runs after protocol callbacks so the turn's own handlers (writeback) finish first.
+// A macrotask, not a microtask: Claude reports idle before it pushes the result, and
+// the result's writeback (`complete`) runs in a microtask that must finish before the
+// next queued message resets the turn's revision.
 function schedulePump(c: Conversation): void {
-  if (c.queue.length) queueMicrotask(() => pump(c));
+  if (c.queue.length) setTimeout(() => pump(c), 0);
 }
 function pump(c: Conversation): void {
   if (!conversations.has(c.session.id)) return;

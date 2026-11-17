@@ -105,7 +105,7 @@ vm.runInNewContext(commonjs(await fs.readFile(new URL('../src/chat/queue.ts', im
 function paneFixture(invoke) {
   const module = { exports: {} };
   vm.runInNewContext(commonjs(paneSource + '\nexport const testPane = { start, restart, interrupt, respondPermission, answerQuestion, complete, insertCode, pump, conversations, select(c) { visible = true; currentSession = () => c.session; }, configure(value) { config = value; } };'), {
-    exports: module.exports, queueMicrotask, requestAnimationFrame() {},
+    exports: module.exports, queueMicrotask, setTimeout, requestAnimationFrame() {},
     require(name) {
       if (name === '@tauri-apps/api/core') return { invoke };
       if (name === './beckwell') return { createProtocol };
@@ -115,11 +115,12 @@ function paneFixture(invoke) {
     },
   });
   const pane = module.exports.testPane;
-  const c = { session: { id: 1 }, provider: 'claude', cwd: '/tmp', items: [], process: null, stopped: false, starting: false, ready: false, busy: false, revision: 1, interrupted: false, autoPaste: false, queue: [], queueHeld: false };
+  const c = { session: { id: 1 }, provider: 'claude', cwd: '/tmp', items: [], process: null, stopped: false, starting: false, ready: false, busy: false, revision: 1, interrupted: false, autoPaste: false, queue: [], queueHeld: false, writeFailures: 0 };
   pane.conversations.set(1, c);
   return { pane, c };
 }
 const settle = () => new Promise(resolve => setImmediate(resolve));
+const tick = () => new Promise(resolve => setTimeout(resolve, 5));
 
 test('manual block input uses the selected terminal despite edits, without an Enter', () => {
   const { pane, c } = paneFixture(async () => {});
@@ -289,19 +290,19 @@ test('queued messages are sent one at a time after each turn and wait after Stop
   pane.configure({ agent_chat: { blacklist: [] } });
   c.turns = 0;
   c.session.context = { revision: 1, snapshot: () => ({ available: true, turns: [], excluded: 0 }) };
-  await pane.start(c); await settle();
+  await pane.start(c); await tick();
   const { createQueued } = queueModule.exports;
   c.queue.push(createQueued('first'), createQueued('  '), createQueued('second'));
 
   // Act: the first queued message starts a turn; the rest wait for it to finish.
-  pane.pump(c); await settle();
+  pane.pump(c); await tick();
   assert.equal(sent.length, 1);
   assert.ok(sent[0].includes('first'));
   assert.equal(c.busy, true);
-  pane.pump(c); await settle();
+  pane.pump(c); await tick();
   assert.equal(sent.length, 1);
   c.protocol.handleMessage({ type: 'result', subtype: 'success', result: 'done' });
-  await settle();
+  await tick();
 
   // Assert: the emptied message is dropped and the next one is sent.
   assert.equal(sent.length, 2);
@@ -312,10 +313,49 @@ test('queued messages are sent one at a time after each turn and wait after Stop
   c.queue.push(createQueued('third'));
   await pane.interrupt(c);
   c.protocol.handleMessage({ type: 'result', subtype: 'error_during_execution' });
-  await settle();
+  await tick();
   assert.equal(c.queueHeld, true);
   assert.equal(sent.length, 2);
   assert.equal(c.queue.length, 1);
-  c.queueHeld = false; pane.pump(c); await settle();
+  c.queueHeld = false; pane.pump(c); await tick();
   assert.equal(sent.length, 3);
+});
+
+test('the previous turn is completed before the next queued message starts', async () => {
+  const pasted = [];
+  const { pane, c } = paneFixture(async () => {});
+  pane.configure({ agent_chat: { blacklist: [] } });
+  c.turns = 0; c.autoPaste = true;
+  c.session.context = { revision: 1, atPrompt: true, dirty: false, input() {}, snapshot: () => ({ available: true, turns: [], excluded: 0 }) };
+  c.session.terminal = { buffer: { active: { type: 'normal' } }, paste(text) { pasted.push(text); } };
+  pane.select(c);
+  await pane.start(c); await tick();
+  c.queue.push(queueModule.exports.createQueued('next'));
+  pane.pump(c); await tick();
+  // Arrange: the terminal changed during the first turn.
+  c.session.context.revision = 2;
+  c.queue.push(queueModule.exports.createQueued('after'));
+  c.protocol.handleMessage({ type: 'result', subtype: 'success', result: commandBlock });
+  await tick();
+  // Assert: the stale command is not pasted even though the next turn has started.
+  assert.deepEqual(pasted, []);
+  assert.equal(c.busy, true);
+  assert.equal(c.queue.length, 0);
+});
+
+test('a queued message whose write fails is restored and the queue is held', async () => {
+  let fail = false;
+  const { pane, c } = paneFixture(async (cmd, args) => {
+    if (cmd === 'agent_write' && fail && JSON.parse(args.line).type === 'user') throw new Error('disconnected');
+  });
+  pane.configure({ agent_chat: { blacklist: [] } });
+  c.turns = 0;
+  c.session.context = { revision: 1, snapshot: () => ({ available: true, turns: [], excluded: 0 }) };
+  await pane.start(c); await tick();
+  fail = true;
+  c.queue.push(queueModule.exports.createQueued('keep me'));
+  pane.pump(c); await tick();
+  assert.deepEqual(c.queue.map(entry => entry.text), ['keep me']);
+  assert.equal(c.queueHeld, true);
+  assert.equal(c.busy, false);
 });

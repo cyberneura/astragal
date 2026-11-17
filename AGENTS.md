@@ -275,9 +275,11 @@ stream-json / app-server の共通エンジンと Markdown 描画のコピー。
   再初期化で終了させる。SIGTERM の後に期限付き SIGKILL へ進む
 - 応答中 (`busy`、または起動中) に送った文は `Conversation.queue` に積み (`src/chat/queue.ts`、Beckwell の
   `src/lib/chat/queue.ts` の移植)、入力欄の上に一覧を出す。送られるまで textarea で書き換えられ、↑ で 1 つ上に
-  空行を挟んで連結、× で取り除く。host の `setBusy(false)` / `setReady(true)` から microtask で `pump` し、
-  `canDispatch` が通れば先頭を 1 つだけ `dispatch` (直接送るのと同じ処理) に渡す。microtask にしているのは、
-  同じターンの `complete` (書き戻し) を先に済ませるため。ターミナルの共有範囲は実際に送る時点で取る。
+  空行を挟んで連結、× で取り除く。host の `setBusy(false)` / `setReady(true)` から `setTimeout(0)` で `pump` し、
+  `canDispatch` が通れば先頭を 1 つだけ `dispatch` (直接送るのと同じ処理) に渡す。microtask にしないのは、
+  Claude が result を push する前に `setBusy(false)` を呼ぶため (microtask だと `complete` (書き戻し) より先に次の
+  送信が `revision` を書き換え、前のターンのコマンドが貼られうる)。プロトコルは書き込みの失敗を `send()` の
+  reject ではなく resolve で返すので、`host.write` の失敗を `writeFailures` で数え、送信の前後で比べて検知する。ターミナルの共有範囲は実際に送る時点で取る。
   Stop (`interrupt`) と New chat / 再起動 (`restart`。Codex の Stop 後の復旧もここを通る) は `queueHeld` を立て、
   Resume か入力欄からの直接送信で解く。空の列に積む時も解く。列が残っている間 (保留でなければ) は直接送らずに
   後ろへ積む (先に積んだ指示を追い越さない)。送れなかった (Follow で cwd が不明等) ら先頭に戻して保留にする
