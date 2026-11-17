@@ -9,6 +9,7 @@ import { isExternalLink, LINK_ATTRIBUTE, renderMarkdown } from "./beckwell/markd
 import { handleCopyClick } from "./beckwell/copy";
 import { chatPrompt, pasteCommand, terminalInputText } from "./context";
 import { initChatTooltips } from "./tooltips";
+import { canDispatch, createQueued, mergeUp, rowsFor, takeNext, type QueuedMessage } from "./queue";
 
 export interface AgentChatConfig {
   enabled: boolean;
@@ -37,7 +38,16 @@ interface Conversation {
   turns: number;
   autoPaste: boolean;
   followDirectory: boolean;
+  // Messages sent while busy, dispatched in order when the agent is idle.
+  queue: QueuedMessage[];
+  // Set by Stop and New chat so the queue does not start on its own.
+  queueHeld: boolean;
+  // The turn started by the last dispatch, until its result arrives. Protocols report
+  // a turn that never started (failed write, rejected turn/start) only by going idle
+  // without a result, so the idle callback checks this.
+  inFlight: InFlight | null;
 }
+interface InFlight { started: boolean; fail(error?: unknown): void }
 const conversations = new Map<number, Conversation>();
 let config: AppConfig;
 let currentSession: () => Session | undefined;
@@ -56,6 +66,13 @@ let autoPaste: HTMLInputElement;
 let cwd: HTMLInputElement;
 let followDirectory: HTMLInputElement;
 let followLabel: HTMLLabelElement;
+let queueBox: HTMLElement;
+let queueCount: HTMLElement;
+let queueState: HTMLElement;
+let queueResume: HTMLButtonElement;
+let queueList: HTMLElement;
+let queueRendered: Conversation | undefined;
+const queueRows = new Map<number, { node: HTMLElement; index: HTMLElement; text: HTMLTextAreaElement; merge: HTMLButtonElement }>();
 let visible = false;
 let resizing = false;
 let generation = 0;
@@ -171,6 +188,15 @@ export async function initAgentChat(appConfig: AppConfig, getSession: () => Sess
   });
   status = el("div", "chat-status"); status.setAttribute("role", "status");
   const form = el("form", "chat-composer");
+  queueBox = el("div", "chat-queue"); queueBox.dataset.annotate = "chat-queue"; queueBox.hidden = true;
+  const queueHeader = el("div", "chat-queue-header");
+  queueCount = el("span", "chat-queue-count");
+  queueState = el("span", "chat-queue-state");
+  queueResume = button("Resume", "chat-queue-resume", () => { const c = active(); if (c) { c.queueHeld = false; pump(c); render(); } });
+  queueResume.title = "Send the queued messages in order when the agent is idle";
+  queueHeader.append(queueCount, queueState, queueResume);
+  queueList = el("div", "chat-queue-list"); queueList.setAttribute("aria-label", "Queued messages");
+  queueBox.append(queueHeader, queueList);
   input = el("textarea", "chat-input"); input.placeholder = "Ask about this terminal…"; input.rows = 3;
   input.setAttribute("aria-label", "Message to agent"); input.dataset.annotate = "chat-input";
   input.addEventListener("input", () => { const c = active(); if (c) c.draft = input.value; });
@@ -194,7 +220,7 @@ export async function initAgentChat(appConfig: AppConfig, getSession: () => Sess
   const pasteLabel = el("label", "chat-control chat-switch"); pasteLabel.append(autoPaste, icon("terminal"));
   pasteLabel.title = "Auto-paste: paste a suggested command only into an unchanged, empty shell prompt. Never press Enter.";
   const controls = el("div", "chat-toolbar"); controls.append(pasteLabel, status, stop, send);
-  form.append(input, controls); form.addEventListener("submit", (e) => { e.preventDefault(); void submit(); });
+  form.append(queueBox, input, controls); form.addEventListener("submit", (e) => { e.preventDefault(); void submit(); });
   contextRow.append(sharing, turnsLabel);
   header.append(title, location, contextRow);
   pane.append(header, log, form);
@@ -212,7 +238,7 @@ export async function initAgentChat(appConfig: AppConfig, getSession: () => Sess
   await win.listen<{ id: number; line: string }>("agent_stderr", ({ payload }) => { const c = byProcess(payload.id); if (c) note(c, payload.line, true); });
   await win.listen<{ id: number; code: number | null }>("agent_exit", ({ payload }) => {
     const c = byProcess(payload.id); if (!c) return;
-    c.ready = false; c.busy = false; c.stopped = true;
+    c.ready = false; c.busy = false; c.stopped = true; c.inFlight = null;
     note(c, `Agent exited (${payload.code ?? "unknown status"}). Use New chat to reconnect.`, true);
   });
   setInterval(() => {
@@ -249,6 +275,7 @@ export function syncAgentChat(): void {
       items: [], process: null, protocol: null, agentSessionId: null, ready: false, busy: false, starting: false, stopped: false,
       draft: "", usage: "", revision: null, interrupted: false, command: null,
       turns: Math.max(0, Math.min(20, config.agent_chat.context_turns)), autoPaste: config.agent_chat.auto_paste, followDirectory: false,
+      queue: [], queueHeld: false, inFlight: null,
     };
     conversations.set(session.id, c); void start(c);
   }
@@ -262,8 +289,8 @@ export function closeAgentChat(session: Session): void {
 }
 async function restart(c: Conversation, resume: string | null = null): Promise<void> {
   if (c.starting) return;
-  c.starting = true; scheduleRender();
-  c.stopped = true; c.ready = false; c.busy = false; c.command = null; c.revision = null;
+  c.starting = true; c.queueHeld = true; scheduleRender();
+  c.stopped = true; c.ready = false; c.busy = false; c.command = null; c.revision = null; c.inFlight = null;
   const old = c.process; c.process = null;
   if (old !== null) {
     try { await invoke("agent_stop", { id: old }); } catch (e) { c.starting = false; note(c, String(e), true); return; }
@@ -278,7 +305,7 @@ async function start(c: Conversation, resume: string | null = null): Promise<voi
   const live = () => c.process === id && !c.stopped && conversations.has(c.session.id);
   const host: ChatHost = {
     get items() { return c.items; },
-    push(item) { if (!live()) return; c.items.push(item); if (item.kind === "result" && /^(success|completed)\b/.test(item.summary)) queueMicrotask(() => { if (live()) complete(c, item.finalText); }); scheduleRender(); },
+    push(item) { if (!live()) return; c.items.push(item); if (item.kind === "result") c.inFlight = null; if (item.kind === "result" && /^(success|completed)\b/.test(item.summary)) queueMicrotask(() => { if (live()) complete(c, item.finalText); }); scheduleRender(); },
     note(text, level) { if (!live()) return; note(c, text, level === "error"); },
     scrollToBottom: scheduleRender,
     async write(payload) {
@@ -286,8 +313,9 @@ async function start(c: Conversation, resume: string | null = null): Promise<voi
       try { await invoke("agent_write", { id, line: JSON.stringify(payload) }); return live(); }
       catch (e) { if (live()) { c.ready = false; c.busy = false; note(c, String(e), true); } return false; }
     },
-    setBusy(busy) { if (!live()) return; c.busy = busy; scheduleRender(); },
-    setReady(ready) { if (!live()) return; c.ready = ready; scheduleRender(); },
+    setBusy(busy) { if (!live()) return; c.busy = busy; if (!busy) afterIdle(c); scheduleRender(); },
+    turnStarted() { if (live() && c.inFlight) c.inFlight.started = true; },
+    setReady(ready) { if (!live()) return; c.ready = ready; if (ready) afterIdle(c); scheduleRender(); },
     setSession(session) { if (!live()) return; c.agentSessionId = session?.sessionId || null; if (session) note(c, `${session.model} · ${session.detail}`); },
     setUsage(usage) { if (!live()) return; c.usage = usage ?? ""; scheduleRender(); },
     setWorkingDirectory(value) { if (!live()) return; c.cwd = value; scheduleRender(); },
@@ -306,21 +334,84 @@ async function start(c: Conversation, resume: string | null = null): Promise<voi
 }
 
 async function submit(): Promise<void> {
-  const c = active(); if (!c || !c.ready || c.busy || !input.value.trim()) return;
+  const c = active(); if (!c || !input.value.trim()) return;
+  const request = input.value.trim();
+  // While the agent is answering (or starting), queue instead of sending. Also queue
+  // behind messages still waiting so a new message never overtakes them.
+  if (c.busy || (c.starting && !c.stopped) || (c.queue.length > 0 && !c.queueHeld)) {
+    if (!c.queue.length) c.queueHeld = false;
+    c.queue.push(createQueued(request));
+    c.draft = ""; input.value = "";
+    pump(c);
+    render();
+    return;
+  }
+  if (!c.ready) return;
+  const sending = dispatch(c, request);
+  if (!sending) { render(); return; }
+  // Clear and resume before awaiting: the user may type the next message, switch
+  // tabs, or press Stop while the request is being written.
+  c.draft = ""; input.value = "";
+  c.queueHeld = false;
+  render();
+  await sending;
+}
+// Starts one message as a new turn. Returns null if it could not be started.
+// `onFailed` runs only if the write fails for the same agent process.
+function dispatch(c: Conversation, request: string, onFailed?: () => void): Promise<void> | null {
+  if (!c.ready || c.busy || !c.protocol) return null;
   syncDirectory(c);
   if (c.followDirectory && (!c.session.context.workingDirectory || c.session.exited)) {
     note(c, "Waiting for a local terminal directory. Turn off Follow to use a fixed directory.", true);
-    return;
+    return null;
   }
-  const request = input.value.trim();
+  const protocol = c.protocol;
+  const process = c.process;
   const context = c.session.context.snapshot(c.turns, config.agent_chat.blacklist);
   c.revision = c.session.context.revision; c.command = null; c.interrupted = false;
   c.items.push({ kind: "user", text: request });
   note(c, `Shared ${context.turns.length} completed turns; ${context.excluded} excluded.`);
-  c.busy = true; c.draft = ""; input.value = "";
-  render();
-  try { await c.protocol!.send(chatPrompt(request, context), c.protocol!.supportsWorkingDirectory ? { cwd: c.cwd } : undefined); }
-  catch (e) { c.busy = false; note(c, String(e), true); }
+  c.busy = true;
+  scheduleRender();
+  // A failed turn holds the rest of the queue: later instructions usually depend on
+  // it. Only a message the agent never accepted goes back to the queue (onFailed);
+  // one that started may already have run commands and must not be resent.
+  const record: InFlight = {
+    started: false,
+    fail(error?: unknown) {
+      if (c.inFlight !== record || c.stopped || c.protocol !== protocol || c.process !== process) return;
+      c.inFlight = null; c.busy = false; c.queueHeld = true;
+      if (error !== undefined) note(c, String(error), true);
+      if (!record.started) onFailed?.();
+      scheduleRender();
+    },
+  };
+  c.inFlight = record;
+  return protocol.send(chatPrompt(request, context), protocol.supportsWorkingDirectory ? { cwd: c.cwd } : undefined)
+    .then(() => {}, (e) => record.fail(e));
+}
+// A macrotask, not a microtask: Claude reports idle before it pushes the result, and
+// the result's writeback (`complete`) runs in a microtask that must finish before the
+// next queued message resets the turn's revision.
+function afterIdle(c: Conversation): void {
+  const record = c.inFlight;
+  if (!record && !c.queue.length) return;
+  setTimeout(() => {
+    // Idle without a result: the turn was rejected, could not be written, or failed
+    // (e.g. a Codex error notification). `fail` re-queues only the first two.
+    if (record && c.inFlight === record && !c.busy) record.fail();
+    pump(c);
+  }, 0);
+}
+function pump(c: Conversation): void {
+  if (!conversations.has(c.session.id)) return;
+  if (!canDispatch({ queued: c.queue.length, held: c.queueHeld, busy: c.busy, ready: c.ready, running: c.process !== null && !c.stopped, starting: c.starting })) return;
+  const request = takeNext(c.queue);
+  scheduleRender();
+  if (request === null) return;
+  // Keep a message that was not sent and wait for Resume instead of retrying in a loop.
+  const restore = () => { c.queue.unshift(createQueued(request)); c.queueHeld = true; scheduleRender(); };
+  if (!dispatch(c, request, restore)) restore();
 }
 async function interrupt(c: Conversation): Promise<void> {
   const protocol = c.protocol;
@@ -328,6 +419,8 @@ async function interrupt(c: Conversation): Promise<void> {
   const live = () => !c.stopped && c.protocol === protocol && c.process === process;
   if (!protocol || !live()) return;
   c.interrupted = true; c.command = null; c.revision = null;
+  // Stop is usually pressed to change direction; do not let queued messages start by themselves.
+  c.queueHeld = true;
   for (const item of c.items) {
     if (!live()) return;
     if (item.kind === "permission" && !item.decision) await respondPermission(c, item, "deny");
@@ -430,7 +523,15 @@ function render(): void {
     rendered = c; rows.clear(); log.replaceChildren(); input.value = c?.draft ?? "";
     if (c) { provider.value = c.provider; turns.value = String(c.turns); autoPaste.checked = c.autoPaste; cwd.value = c.cwd; }
   }
-  send.disabled = !c?.ready || c.busy;
+  const queueing = !!c && (c.busy || (c.starting && !c.stopped) || (c.queue.length > 0 && !c.queueHeld));
+  send.disabled = !c || (!c.ready && !queueing);
+  const sendLabel = queueing ? shortcutLabel("Queue (⌘Enter) — sent when the agent is idle", "Queue (Ctrl+Enter) — sent when the agent is idle") : shortcutLabel("Send (⌘Enter)", "Send (Ctrl+Enter)");
+  // Only touch the title when it changes; the tooltip helper observes title mutations.
+  if (send.getAttribute("aria-label") !== (queueing ? "Queue" : "Send")) {
+    send.title = sendLabel; send.setAttribute("aria-label", queueing ? "Queue" : "Send");
+    input.placeholder = queueing ? "Queue a message for when the agent is idle…" : "Ask about this terminal…";
+  }
+  renderQueue(c);
   stop.disabled = !c?.busy;
   provider.disabled = !c || c.starting;
   cwd.disabled = !c || c.starting || c.followDirectory;
@@ -502,4 +603,49 @@ function renderQuestion(c: Conversation, item: QuestionItem, node: HTMLElement):
   node.append(button("Answer", "chat-answer", () => {
     if ([...answers.values()].some((answer) => !answer.reportValidity())) return;
     void answerQuestion(c, item, Object.fromEntries([...answers].map(([key, value]) => [key, value.value]))); }), button("Decline", "chat-decline", () => { void answerQuestion(c, item, null); }));
+}
+
+function renderQueue(c: Conversation | undefined): void {
+  if (queueRendered !== c) { queueRendered = c; queueRows.clear(); queueList.replaceChildren(); }
+  const queue = c?.queue ?? [];
+  queueBox.hidden = queue.length === 0;
+  if (!c || !queue.length) { queueRows.clear(); queueList.replaceChildren(); return; }
+  queueCount.textContent = `Queued (${queue.length})`;
+  queueState.textContent = c.queueHeld ? "held" : "sent in order when the agent is idle";
+  queueState.classList.toggle("held", c.queueHeld);
+  queueResume.hidden = !c.queueHeld;
+  const ids = new Set(queue.map((entry) => entry.id));
+  for (const [id, row] of queueRows) if (!ids.has(id)) { row.node.remove(); queueRows.delete(id); }
+  let previous: HTMLElement | null = null;
+  queue.forEach((entry, index) => {
+    let row = queueRows.get(entry.id);
+    if (!row) row = queueRow(c, entry);
+    // Only move rows that are out of place so a focused textarea keeps focus.
+    const expected: ChildNode | null = previous ? previous.nextSibling : queueList.firstChild;
+    if (expected !== row.node) queueList.insertBefore(row.node, expected);
+    previous = row.node;
+    row.index.textContent = String(index + 1);
+    row.text.setAttribute("aria-label", `Queued message ${index + 1}`);
+    row.merge.disabled = index === 0;
+    if (document.activeElement !== row.text && row.text.value !== entry.text) row.text.value = entry.text;
+    row.text.rows = rowsFor(row.text.value);
+  });
+}
+function queueRow(c: Conversation, entry: QueuedMessage): { node: HTMLElement; index: HTMLElement; text: HTMLTextAreaElement; merge: HTMLButtonElement } {
+  const node = el("div", "chat-queue-item");
+  const index = el("span", "chat-queue-index"); index.setAttribute("aria-hidden", "true");
+  const text = el("textarea", "chat-queue-text"); text.spellcheck = false; text.value = entry.text;
+  text.dataset.annotate = "chat-queue-text";
+  text.addEventListener("input", () => { entry.text = text.value; text.rows = rowsFor(text.value); });
+  const position = () => c.queue.indexOf(entry);
+  const merge = iconButton("Append to the message above", "arrow-up", "chat-queue-merge", () => {
+    if (mergeUp(c.queue, position())) render();
+  });
+  const remove = iconButton("Remove from queue", "close", "chat-queue-remove", () => {
+    const at = position(); if (at >= 0) { c.queue.splice(at, 1); render(); }
+  });
+  node.append(index, text, merge, remove);
+  const row = { node, index, text, merge };
+  queueRows.set(entry.id, row);
+  return row;
 }

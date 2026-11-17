@@ -71,6 +71,15 @@ CLI estimates, not necessarily subscription charges.
 Press **Command+Enter** to send a message (**Ctrl+Enter** on Windows), or click
 **Send**. Enter inserts a newline. The keyboard shortcut is inactive during IME
 composition, including Japanese conversion.
+
+While the agent is answering, sending does not interrupt it: the message is
+queued above the input and sent automatically, oldest first, each time the agent
+finishes a turn. Until a queued message is sent you can edit it in place, append
+it to the message above (↑), or remove it (×). **Stop** and **New chat** hold the
+queue so it does not start by itself; click **Resume** in the queue header, or
+send a message directly, to continue. The queue belongs to the terminal tab and is
+not saved when the tab is closed. Terminal context is shared when each queued
+message is actually sent, not when it was queued.
 Chat controls use icons: a speech bubble for chat, a paper plane for Send, a square
 for Stop, a link for Follow, a history clock for Turns, and a terminal for
 Auto-paste. Hover over each control for a quick tooltip, or focus it with the

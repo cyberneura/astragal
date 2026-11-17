@@ -346,6 +346,7 @@ export function createClaudeProtocol(host: ChatHost, options: ProtocolOptions): 
       }
       const written = await host.write({ type: 'user', message: { role: 'user', content: text } });
       // 届かなかったメッセージには result が返らないので、ここで戻さないと以後送信できなくなる
+      if (written) host.turnStarted?.();
       if (!written) {
         host.setBusy(false);
         const index = awaitingEcho.lastIndexOf(text);
