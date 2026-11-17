@@ -44,24 +44,26 @@ const OPENAI_API_KEY_ENV: &str = "OPENAI_API_KEY";
 /// かかり、サブスクリプションの利用枠も食うので、出力が続くタブでも詰めすぎない。
 const DEFAULT_TAB_SUMMARY_INTERVAL_SECS: u64 = 120;
 /// 間隔の下限 (秒)。0 や 1 を書かれて出力のたびに CLI が起動するのを防ぐ。
-const MIN_TAB_SUMMARY_INTERVAL_SECS: u64 = 15;
+pub(crate) const MIN_TAB_SUMMARY_INTERVAL_SECS: u64 = 15;
 
-const MAIN_WINDOW_DEFAULT: ResolvedWindow = ResolvedWindow {
+pub(crate) const MAIN_WINDOW_DEFAULT: ResolvedWindow = ResolvedWindow {
     width: 900.0,
     height: 580.0,
     hide_on_blur: false,
 };
 
-const SMALL_WINDOW_DEFAULT: ResolvedWindow = ResolvedWindow {
+pub(crate) const SMALL_WINDOW_DEFAULT: ResolvedWindow = ResolvedWindow {
     width: 800.0,
     height: 600.0,
     hide_on_blur: true,
 };
 
-const CONFIG_TEMPLATE: &str = r##"# Astragal config file
+pub(crate) const CONFIG_TEMPLATE: &str = r##"# Astragal config file
 # https://github.com/cyberneura/astragal
 #
 # Only the keys you write here override the defaults.
+# You can also edit these settings from Settings… (the menu bar icon's menu, or
+# Astragal > Settings… on macOS). Saving from there rewrites this file without comments.
 
 # font:
 #   # CSS font-family list passed to xterm, tried from left to right.
@@ -564,27 +566,38 @@ pub struct LoadedConfig {
     pub path: PathBuf,
     /// 設定を読めなかった理由。起動は止めず、フロントで警告として表示する。
     pub warning: Option<String>,
+    /// config_override_command が上書きしたキー (`font.size` のようなドット区切りの葉)。
+    /// Settings ウインドウで読み取り専用にし、保存時にローカルへ書き戻さないために使う
+    pub override_keys: Vec<String>,
 }
 
 /// 設定を読み込む。失敗しても既定値で起動を続け、理由を warning に載せる
 /// (設定ミスでターミナルが一切開けなくなる方が困る)。
 pub fn load() -> LoadedConfig {
     let path = config_path();
-    match load_from(&path) {
-        Ok((config, warning)) => LoadedConfig {
+    match load_with_overrides(&path) {
+        Ok((config, warning, override_keys)) => LoadedConfig {
             config,
             path,
             warning,
+            override_keys,
         },
         Err(warning) => LoadedConfig {
             config: Config::default(),
             path,
             warning: Some(warning),
+            override_keys: Vec::new(),
         },
     }
 }
 
+#[cfg(test)]
 fn load_from(path: &Path) -> Result<(Config, Option<String>), String> {
+    load_with_overrides(path).map(|(config, warning, _)| (config, warning))
+}
+
+/// 設定を読み込み、警告と config_override_command が上書きしたキーも返す。
+fn load_with_overrides(path: &Path) -> Result<(Config, Option<String>, Vec<String>), String> {
     let mut warnings: Vec<String> = ensure_config_file(path).err().into_iter().collect();
 
     let text = std::fs::read_to_string(path)
@@ -592,6 +605,7 @@ fn load_from(path: &Path) -> Result<(Config, Option<String>), String> {
     let local = parse_mapping(&text, &path.display().to_string())?;
 
     let mut merged = None;
+    let mut override_keys = Vec::new();
     match override_command(&local) {
         Ok(Some(command)) => match fetch_override(&command) {
             Ok(overrides) => {
@@ -599,6 +613,7 @@ fn load_from(path: &Path) -> Result<(Config, Option<String>), String> {
                 let mut doc = local.clone();
                 merge_mapping(&mut doc, &overrides);
                 merged = Some(doc);
+                override_keys = leaf_paths(&overrides);
             }
             // 取得できなくてもローカルの設定で起動する。黙って落とすと
             // 「上書きが効いていない」ことに気付けないので warning に残す。
@@ -615,6 +630,7 @@ fn load_from(path: &Path) -> Result<(Config, Option<String>), String> {
             // 諦めると、取得先の 1 つの値のせいで全設定が既定値に落ちる。
             Err(e) => {
                 warnings.push(format!("{e} (ignored the override)"));
+                override_keys.clear();
                 parse_config(local, path)?
             }
         },
@@ -622,17 +638,58 @@ fn load_from(path: &Path) -> Result<(Config, Option<String>), String> {
     };
 
     warnings.extend(config.sanitize());
-    Ok((config, (!warnings.is_empty()).then(|| warnings.join("\n"))))
+    Ok((
+        config,
+        (!warnings.is_empty()).then(|| warnings.join("\n")),
+        override_keys,
+    ))
 }
 
-fn parse_config(mut doc: Mapping, path: &Path) -> Result<Config, String> {
+/// mapping の葉 (mapping 以外の値) のキーをドット区切りで並べる。
+/// `config_override_command` は設定ではないので数えない。空の mapping は何も上書きしないので数えない。
+pub(crate) fn leaf_paths(doc: &Mapping) -> Vec<String> {
+    fn walk(map: &Mapping, prefix: &str, out: &mut Vec<String>) {
+        for (key, value) in map {
+            let Some(key) = key_text(key) else {
+                continue;
+            };
+            if prefix.is_empty() && key == CONFIG_OVERRIDE_COMMAND_KEY {
+                continue;
+            }
+            let path = if prefix.is_empty() {
+                key
+            } else {
+                format!("{prefix}.{key}")
+            };
+            match value {
+                Value::Mapping(child) => walk(child, &path, out),
+                _ => out.push(path),
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(doc, "", &mut out);
+    out
+}
+
+/// YAML のキーを文字列として読む (数値や真偽値のキーも文字列にする)。
+fn key_text(key: &Value) -> Option<String> {
+    match key {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+pub(crate) fn parse_config(mut doc: Mapping, path: &Path) -> Result<Config, String> {
     // 適用済みなので落とす (取得 YAML 側が持っていても再帰取得はしない)。
     doc.remove(CONFIG_OVERRIDE_COMMAND_KEY);
     serde_yaml::from_value::<Config>(Value::Mapping(doc))
         .map_err(|e| format!("Invalid config in {}: {e}", path.display()))
 }
 
-fn fetch_override(command: &str) -> Result<Mapping, String> {
+pub(crate) fn fetch_override(command: &str) -> Result<Mapping, String> {
     let yaml = run_override_command(command, OVERRIDE_COMMAND_TIMEOUT)?;
     parse_mapping(&yaml, &format!("{CONFIG_OVERRIDE_COMMAND_KEY}: {command}"))
 }
@@ -677,7 +734,7 @@ fn ensure_config_file(path: &Path) -> Result<(), String> {
         .map_err(|e| format!("Failed to create {}: {e}", path.display()))
 }
 
-fn parse_mapping(text: &str, source: &str) -> Result<Mapping, String> {
+pub(crate) fn parse_mapping(text: &str, source: &str) -> Result<Mapping, String> {
     let value: Value = serde_yaml::from_str(text)
         .map_err(|e| format!("Failed to parse YAML from {source}: {e}"))?;
     match value {
@@ -688,7 +745,7 @@ fn parse_mapping(text: &str, source: &str) -> Result<Mapping, String> {
     }
 }
 
-fn override_command(doc: &Mapping) -> Result<Option<String>, String> {
+pub(crate) fn override_command(doc: &Mapping) -> Result<Option<String>, String> {
     let Some(value) = doc.get(CONFIG_OVERRIDE_COMMAND_KEY) else {
         return Ok(None);
     };
@@ -704,7 +761,7 @@ fn override_command(doc: &Mapping) -> Result<Option<String>, String> {
 
 /// mapping 同士は再帰的に混ぜ、スカラーとリストは丸ごと置き換える
 /// (リストの要素単位マージは「同じ項目」を決められないので行わない)。
-fn merge_mapping(base: &mut Mapping, overrides: &Mapping) {
+pub(crate) fn merge_mapping(base: &mut Mapping, overrides: &Mapping) {
     for (key, over_value) in overrides {
         match (base.get_mut(key), over_value) {
             (Some(Value::Mapping(base_map)), Value::Mapping(over_map)) => {
@@ -1302,6 +1359,30 @@ mod tests {
         assert_eq!(config.font.size, 22.0);
         assert_eq!(config.font.family, "Menlo");
         assert!(warning.is_none(), "unexpected warning: {warning:?}");
+    }
+
+    // /bin の Unix コマンドを使う (Windows の CI では走らせない)
+    #[cfg(unix)]
+    #[test]
+    fn overridden_keys_are_recorded_as_dotted_leaves() {
+        // Arrange
+        let path = temp_dir("override-keys").join("config.yaml");
+        std::fs::write(
+            &path,
+            "config_override_command: \
+             '/bin/echo {\"ai\": {\"api_key\": \"k\"}, \"font\": {\"size\": 20}}'\n",
+        )
+        .expect("should write config");
+
+        // Act
+        let (_, warning, keys) = load_with_overrides(&path).expect("should load");
+
+        // Assert
+        assert!(warning.is_none(), "unexpected warning: {warning:?}");
+        assert_eq!(
+            keys,
+            vec!["ai.api_key".to_string(), "font.size".to_string()]
+        );
     }
 
     // /bin の Unix コマンドを使う (Windows の CI では走らせない)

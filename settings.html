@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="color-scheme" content="dark" />
+    <style>html { color-scheme: dark; background: #111111; }</style>
+    <link rel="stylesheet" href="/src/settings.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Astragal Settings</title>
+    <script type="module" src="/src/settings.ts" defer></script>
+  </head>
+
+  <body>
+    <main id="settings"></main>
+    <footer id="settings-footer">
+      <p id="settings-status" aria-live="polite"></p>
+      <div class="row">
+        <button type="button" id="settings-open">Open Config File</button>
+        <button type="button" id="settings-text">Edit as Text</button>
+        <span class="spacer"></span>
+        <button type="button" id="settings-restart" hidden>Restart Now</button>
+        <button type="button" id="settings-revert" disabled>Revert</button>
+        <button type="button" id="settings-save" class="primary" disabled>Save</button>
+      </div>
+    </footer>
+  </body>
+</html>

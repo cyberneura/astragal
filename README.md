@@ -35,6 +35,8 @@ Website: https://www.cyberneura.com/app/astragal
 - Click the menu bar icon to show or hide the popover; right-click it for the menu
 - On macOS, the app icon appears in the Dock only while the main window is shown. Clicking
   it brings the main window to the front
+- Settings… (the menu bar icon's right-click menu, or Astragal > Settings… / Cmd+, on macOS)
+  edits the config file in a window. See [Settings window](#settings-window)
 - Launch at Login in the menu bar icon's right-click menu starts Astragal when you log in,
   with only the menu bar icon (no main window). Open the main window from the same menu or
   with the hotkey
@@ -321,6 +323,31 @@ combination.
 
 Set the `ASTRAGAL_CONFIG` environment variable to a config file path to start using that
 file instead.
+
+### Settings window
+
+Settings… in the menu bar icon's right-click menu (Astragal > Settings…, Cmd+, on macOS)
+edits the same file with a form: one line of help per option, a Default button to go back
+to the default value, and errors shown next to the field (nothing is saved while a field
+is invalid). Hotkeys are recorded by clicking the field and pressing the keys.
+
+- **Settings apply the next time Astragal starts.** After saving, Restart Now restarts it
+  (open tabs and their shells are closed).
+- Saving rewrites the file from the form, so **comments in it are removed**, and only the
+  values that differ from the defaults are written. Before the first save, a copy of the
+  file is kept next to it as `config.yaml.bak` (or `config.yml.bak`), and if the file has
+  comments you wrote, Settings asks once before overwriting it. A symbolic link is kept;
+  the file it points to is written.
+- A file Astragal cannot read (a YAML error or an unknown key) is never overwritten. The
+  window shows the error instead; fix it with Edit as Text or Open Config File. Edit as
+  Text edits the file as it is, comments included, and only saves text Astragal can read.
+- API key fields never show the key. You can keep the key in 1Password (recommended: the
+  field shows the YAML to store and the `op read` command for `config_override_command`)
+  or enter it directly, in which case it is saved in plain text in the file.
+- Keys that `config_override_command` overrides are read-only in the window, and their
+  values are never written to the file: the window works on the file alone, not on the
+  values merged from 1Password. Test next to the command runs it and reports how many keys
+  it overrides, without showing any value.
 
 ### Ask AI
 

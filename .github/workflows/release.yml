@@ -184,6 +184,9 @@ jobs:
       - name: Test the mouse integration toggle
         run: pnpm test:mouse
 
+      - name: Test the Settings window helpers
+        run: pnpm test:settings
+
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
