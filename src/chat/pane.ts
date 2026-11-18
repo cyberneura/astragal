@@ -10,6 +10,7 @@ import { handleCopyClick } from "./beckwell/copy";
 import { chatPrompt, pasteCommand, terminalInputText } from "./context";
 import { initChatTooltips } from "./tooltips";
 import { canDispatch, createQueued, mergeUp, rowsFor, takeNext, type QueuedMessage } from "./queue";
+import { shouldFollowBottom, type ScrollMetrics } from "./scroll";
 
 export interface AgentChatConfig {
   enabled: boolean;
@@ -78,6 +79,14 @@ let resizing = false;
 let generation = 0;
 let nextId = 0;
 let rendered: Conversation | undefined;
+// Whether new output scrolls the log to the end (scroll.ts). Stops when the user scrolls up and resumes
+// at the bottom. The position is recorded on every scroll so the decision uses the position before new
+// items were appended (measuring after would make the reader look further from the end).
+let followBottom = true;
+let lastScroll: ScrollMetrics = { scrollTop: 0, scrollHeight: 0, clientHeight: 0 };
+function readScroll(): ScrollMetrics {
+  return { scrollTop: log.scrollTop, scrollHeight: log.scrollHeight, clientHeight: log.clientHeight };
+}
 let scheduled = false;
 const rows = new Map<Item, { node: HTMLElement; signature: string }>();
 
@@ -180,6 +189,11 @@ export async function initAgentChat(appConfig: AppConfig, getSession: () => Sess
   contextLabel = el("summary", "", "Terminal context"); contextLabel.dataset.annotate = "chat-context-preview";
   preview = el("pre", ""); sharing.append(contextLabel, preview);
   log = el("div", "chat-log"); log.setAttribute("aria-label", "Agent conversation");
+  log.addEventListener("scroll", () => {
+    const metrics = readScroll();
+    followBottom = shouldFollowBottom(followBottom, lastScroll, metrics);
+    lastScroll = metrics;
+  }, { passive: true });
   log.addEventListener("click", (event) => {
     if (handleCopyClick(event)) return;
     const link = (event.target as Element).closest(`[${LINK_ATTRIBUTE}]`);
@@ -370,6 +384,8 @@ function dispatch(c: Conversation, request: string, onFailed?: () => void): Prom
   const context = c.session.context.snapshot(c.turns, config.agent_chat.blacklist);
   c.revision = c.session.context.revision; c.command = null; c.interrupted = false;
   c.items.push({ kind: "user", text: request });
+  // The user just sent this: show it and the answer even if they had scrolled up
+  if (c === rendered) followBottom = true;
   note(c, `Shared ${context.turns.length} completed turns; ${context.excluded} excluded.`);
   c.busy = true;
   scheduleRender();
@@ -520,7 +536,7 @@ function render(): void {
   if (!pane || !visible) return;
   const c = active();
   if (rendered !== c) {
-    rendered = c; rows.clear(); log.replaceChildren(); input.value = c?.draft ?? "";
+    rendered = c; rows.clear(); log.replaceChildren(); input.value = c?.draft ?? ""; followBottom = true;
     if (c) { provider.value = c.provider; turns.value = String(c.turns); autoPaste.checked = c.autoPaste; cwd.value = c.cwd; }
   }
   const queueing = !!c && (c.busy || (c.starting && !c.stopped) || (c.queue.length > 0 && !c.queueHeld));
@@ -542,16 +558,34 @@ function render(): void {
   renderDirectory(c);
   renderContext(c);
   status.textContent = `${c.starting ? "Starting agent…" : c.busy ? "Working…" : c.ready ? "Ready" : "Disconnected"}${c.usage ? ` · ${c.usage}` : ""}`;
-  const follow = log.scrollHeight - log.scrollTop - log.clientHeight < 64;
+  const follow = followBottom;
   for (const item of c.items) {
     let row = rows.get(item);
     if (!row) { const node = el("article", `chat-item chat-${item.kind}`); log.append(node); row = { node, signature: "" }; rows.set(item, row); }
-    const signature = JSON.stringify(item);
+    // Thinking is shown only as an animated indicator, so its text deltas must not re-render it
+    // (re-rendering restarts the animation on every delta).
+    const signature = item.kind === "thinking" ? `thinking:${thinkingActive(c, item)}` : JSON.stringify(item);
     if (row.signature === signature) continue;
     row.signature = signature;
     renderItem(c, item, row.node);
   }
-  if (follow) log.scrollTop = log.scrollHeight;
+  if (follow) {
+    log.scrollTop = log.scrollHeight;
+    // Scroll events are coalesced per frame, so remember where we sent the log; an upward move made in the
+    // same frame is then still seen as a decrease from here.
+    lastScroll = readScroll();
+  }
+}
+// A thinking block is shown while it streams in the current, active turn. A stream left open by a turn that
+// ended without closing it (process exit) must not animate forever, hence the busy check; and it must not come
+// back when the next turn makes the conversation busy again, hence only items after the last user message.
+function thinkingActive(c: Conversation, item: Item & { kind: "thinking" }): boolean {
+  if (!item.streaming || !c.busy) return false;
+  for (let i = c.items.length - 1; i >= 0; i--) {
+    if (c.items[i] === item) return true;
+    if (c.items[i].kind === "user") return false;
+  }
+  return false;
 }
 function renderItem(c: Conversation, item: Item, node: HTMLElement): void {
   const expanded = node.querySelector("details")?.open ?? false;
@@ -568,10 +602,25 @@ function renderItem(c: Conversation, item: Item, node: HTMLElement): void {
         block.append(insert);
       }
     }
-  } else if (item.kind === "thinking" || item.kind === "tool_use") {
+  } else if (item.kind === "thinking") {
+    // Like Beckwell's activity line: a twinkling sparkle and the label waving one character at a time.
+    // Once thinking is over the row is hidden; the reasoning text itself is not shown.
+    node.hidden = !thinkingActive(c, item);
+    if (node.hidden) return;
+    const label = "Thinking…";
+    const line = el("div", "chat-thinking-activity"); line.setAttribute("role", "status"); line.setAttribute("aria-label", label);
+    const sparkle = el("span", "chat-sparkle", "✦"); sparkle.setAttribute("aria-hidden", "true");
+    const text = el("span", ""); text.setAttribute("aria-hidden", "true");
+    Array.from(label).forEach((char, index) => {
+      const wave = el("span", "chat-wave", char === " " ? "\u00a0" : char);
+      wave.style.animationDelay = `${index * 70}ms`;
+      text.append(wave);
+    });
+    line.append(sparkle, text); node.append(line);
+  } else if (item.kind === "tool_use") {
     const details = el("details", ""); details.open = expanded;
-    const title = item.kind === "thinking" ? "Thinking" : `${item.name}${item.isError ? " · failed" : item.result === null ? " · running" : ""}`;
-    details.append(el("summary", "", title), el("pre", "", item.kind === "thinking" ? item.text : `${JSON.stringify(item.input, null, 2)}\n${item.result ?? ""}`)); node.append(details);
+    const title = `${item.name}${item.isError ? " · failed" : item.result === null ? " · running" : ""}`;
+    details.append(el("summary", "", title), el("pre", "", `${JSON.stringify(item.input, null, 2)}\n${item.result ?? ""}`)); node.append(details);
   } else if (item.kind === "permission") {
     node.append(el("strong", "", `Permission: ${item.toolName}`), el("pre", "", item.description), el("pre", "", JSON.stringify(item.input, null, 2)));
     if (item.decision) node.append(el("p", "", item.decision));

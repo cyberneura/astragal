@@ -115,3 +115,11 @@
 .chat-queue-text:focus { outline: none; border-color: #8a7444; }
 #agent-chat .chat-queue-item .chat-icon-button { flex-shrink: 0; width: 22px; height: 22px; font-size: 14px; }
 #agent-chat .chat-queue-item .chat-icon-button:disabled { opacity: .3; cursor: default; }
+/* Thinking indicator (CYBERNEURA-DEV-1308, same motion as Beckwell's activity line): the sparkle twinkles and
+   each character is lifted and brightened in turn. The row is hidden once thinking is over. */
+.chat-thinking-activity { display: flex; align-items: center; gap: 6px; color: #c9a56a; font-size: 12px; }
+.chat-sparkle { display: inline-block; animation: chat-twinkle 1.4s ease-in-out infinite; }
+.chat-wave { display: inline-block; opacity: .45; animation: chat-wave 1.8s ease-in-out infinite; }
+@keyframes chat-twinkle { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+@keyframes chat-wave { 0%, 40%, 100% { transform: translateY(0); opacity: .45; } 20% { transform: translateY(-1.5px); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .chat-sparkle, .chat-wave { animation: none; } }
