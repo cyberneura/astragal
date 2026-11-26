@@ -1,390 +1,390 @@
 # Astragal
 
-macOS 用の軽量ターミナルアプリ。Tauri 2 (Rust) + xterm.js。
+A lightweight terminal app for macOS. Tauri 2 (Rust) + xterm.js.
 
-ユーザー向けの説明と設定リファレンスは `README.md` にある。ここには
-エージェントが作業する上で必要な、コードから読み取りにくい事項だけを書く。
+The user-facing description and the configuration reference are in `README.md`. Only things an
+agent needs to know while working, and that are hard to read from the code, are written here.
 
-## 表示言語
+## Language
 
-public リポジトリなので、**README・UI 文字列・エラーメッセージ・警告はすべて英語**で書く
-(CYBERNEURA-DEV-656 での指示)。**この AGENTS.md (= `CLAUDE.md`) だけは日本語**。
-エージェント向けの開発メモで、他リポジトリでも「ユーザー向け表示は英語、開発者向け
-ドキュメントは日本語」で揃えているため。
+This is a public repository, so **the README, UI strings, error messages and warnings are all written in English**
+(as instructed in CYBERNEURA-DEV-656). **This AGENTS.md (= `CLAUDE.md`) is in English too.**
+It is the development notes for agents, and developer documentation in the public repositories
+is kept in English as well.
 
-コードコメントは現時点で日本語のままになっている。cyberneura の他の public リポジトリ
-(runandlog / j-menu) はコメントも英語で揃えているので、いずれ寄せる余地はある。
+Code comments are still in Japanese at the moment. cyberneura's other public repositories
+(runandlog / j-menu) have their comments in English too, so there is room to align them eventually.
 
-## 構成
+## Layout
 
-| パス | 役割 |
+| Path | Role |
 |---|---|
-| `src-tauri/src/lib.rs` | pty セッション、ウインドウ配置、トレイ、ホットキー |
-| `src-tauri/src/config.rs` | `~/.config/astragal/config.yaml` の読み込みとマージ |
-| `src/terminal.ts` | xterm の生成とテーマ適用、インライン画像 (imgcat / SIXEL) の addon |
-| `src/links.ts` | URL の検出と Cmd+クリックでの起動 |
-| `src-tauri/src/cli.rs` | コマンドライン引数 (`-e` / `--working-directory`)、ターミナルからの起動し直し、`/usr/local/bin` への導入 |
-| `src/tabs.ts` | タブ管理、Cmd 系キーバインド、Ctrl+Tab のタブ巡回、Cmd+Shift+[ / ] のタブ移動、Cmd+K のクリア |
-| `src/ai.ts` / `src-tauri/src/ai.rs` | Cmd+I の Ask AI (依頼からシェルコマンドを 1 行作り、プロンプトに貼り付ける。既定は無効) |
-| `src/tab-summary.ts` / `src-tauri/src/tab_summary.rs` | タブ名と要約の自動生成 (いつ送るか・表示 / provider の起動と応答の整形。既定は無効) |
-| `src/remote-drop.ts` / `src-tauri/src/remote_drop.rs` | ssh 中のタブへファイルをドロップして scp で送る (ドロップゾーンと確認ダイアログ / ssh の argv の解釈と scp の引数) |
-| `src/mouse-integration.ts` / `src/mouse-gate.ts` / `src-tauri/src/mouse_integration.rs` | Mouse integration の ON / OFF (タブバーのボタン・View メニュー・トレイメニュー / xterm のマウスレポートを止める門番 / アプリ全体の状態とメニューのチェック表示) |
-| `src/search.ts` | Cmd+F の検索バー (xterm-addon-search)。ウインドウに 1 つで、アクティブなタブを検索する |
-| `src/main.ts` / `src/small.ts` | メインウインドウ / 吹き出しの入口 |
-| `src/about.ts` | トレイメニューの About から開くウインドウ。バージョンの下にビルド日時 (UTC) を出す (`app_info` の `build_date`) |
-| `src/settings.ts` / `src/settings-fields.ts` / `src-tauri/src/settings.rs` | Settings ウインドウ (フォーム・純粋な部品 / 設定ファイルの読み書きと検査) |
-| `src/licenses.ts` | トレイメニューの Third-Party Licenses から開くウインドウ (`THIRD-PARTY-NOTICES.txt` を表示) |
-| `src-tauri/src/crash_log.rs` | 落ちた理由の記録。panic hook で `panic.log` に書き、macOS では下の例外の guard を入れる |
-| `src-tauri/src/objc_exception.rs` / `src-tauri/src/macos/exception_guard.m` | macOS: AppKit がイベント処理中に投げた Objective-C 例外で落ちないように NSApplication と NSWindow の `-sendEvent:` を包む |
-| `resources/app-icons/` | アイコンのマスター素材と `generate.py` / `inspect_icns.py` |
+| `src-tauri/src/lib.rs` | pty sessions, window placement, tray, hotkeys |
+| `src-tauri/src/config.rs` | Loading and merging `~/.config/astragal/config.yaml` |
+| `src/terminal.ts` | Creating xterm and applying the theme, the inline image (imgcat / SIXEL) addon |
+| `src/links.ts` | Detecting URLs and opening them with Cmd+click |
+| `src-tauri/src/cli.rs` | Command-line arguments (`-e` / `--working-directory`), relaunching when started from a terminal, installing into `/usr/local/bin` |
+| `src/tabs.ts` | Tab management, Cmd key bindings, Ctrl+Tab tab cycling, Cmd+Shift+[ / ] tab moves, Cmd+K clear |
+| `src/ai.ts` / `src-tauri/src/ai.rs` | Cmd+I Ask AI (turns a request into a one-line shell command and pastes it at the prompt. Disabled by default) |
+| `src/tab-summary.ts` / `src-tauri/src/tab_summary.rs` | Automatic generation of tab names and summaries (when to send and display / launching the provider and shaping the reply. Disabled by default) |
+| `src/remote-drop.ts` / `src-tauri/src/remote_drop.rs` | Dropping files onto a tab running ssh to send them with scp (drop zone and confirmation dialog / interpreting the ssh argv and building scp arguments) |
+| `src/mouse-integration.ts` / `src/mouse-gate.ts` / `src-tauri/src/mouse_integration.rs` | Mouse integration ON / OFF (tab bar button, View menu, tray menu / the gatekeeper that stops xterm's mouse reports / app-wide state and menu check marks) |
+| `src/search.ts` | The Cmd+F search bar (xterm-addon-search). One per window; it searches the active tab |
+| `src/main.ts` / `src/small.ts` | Entry points for the main window / the popover |
+| `src/about.ts` | The window opened from About in the tray menu. Shows the build date (UTC) below the version (`build_date` from `app_info`) |
+| `src/settings.ts` / `src/settings-fields.ts` / `src-tauri/src/settings.rs` | The Settings window (form, pure helpers / reading, writing and validating the settings file) |
+| `src/licenses.ts` | The window opened from Third-Party Licenses in the tray menu (shows `THIRD-PARTY-NOTICES.txt`) |
+| `src-tauri/src/crash_log.rs` | Recording why the app crashed. Writes to `panic.log` from a panic hook, and on macOS installs the exception guard below |
+| `src-tauri/src/objc_exception.rs` / `src-tauri/src/macos/exception_guard.m` | macOS: wraps `-sendEvent:` of NSApplication and NSWindow so that Objective-C exceptions thrown by AppKit during event handling do not crash the app |
+| `resources/app-icons/` | Master icon artwork and `generate.py` / `inspect_icns.py` |
 
-常駐ウインドウは 2 つある。`main` (タブ付き) と `small` (メニューバーアイコン直下に出る
-吹き出し)。挙動が違うので、片方だけ直して済ませないこと。`about` / `licenses` / `settings` は開くたびに作り、
-閉じると破棄される。
+There are two resident windows: `main` (with tabs) and `small` (the popover that appears directly below
+the menu bar icon). They behave differently, so do not fix only one of them and call it done. `about` / `licenses` / `settings` are created every time they are opened
+and destroyed when closed.
 
-## ビルド日時の表示 (src-tauri/build.rs)
+## Showing the build date (src-tauri/build.rs)
 
-About ウインドウのバージョンの下の行にビルド日時 (UTC) を出す
-(CYBERNEURA-DEV-1214。beckwell の CYBERNEURA-DEV-1143 と同じ作り)。`build.rs` が `ASTRAGAL_BUILD_DATE`
-(`YYYY-MM-DD HH:MM UTC`、`SOURCE_DATE_EPOCH` があればそれ) を埋め込み、`lib.rs` の `BUILD_DATE` が読む。
-tauri-build は設定ファイルにしか `rerun-if-changed` を出さないので、存在しないパスの `rerun-if-changed` で
-build.rs を毎回走らせている (ソースだけを変えたビルドで古い日時が残らないように)。
-macOS のアプリメニューの About も標準パネルではなく、トレイと同じ About ウインドウを開く (`APP_MENU_ABOUT_ID`)。
-標準パネルのバージョン行は "Version <ApplicationVersion> (<Version>)" の 1 行で、muda の `AboutMetadata` は
-`version` を括弧の外 (ApplicationVersion)、`short_version` を括弧の中 (Version) に渡す。
-「バージョンの下の行にビルド日時」を指定する項目が無いので、標準パネルには戻さない。
+The line below the version in the About window shows the build date (UTC)
+(CYBERNEURA-DEV-1214; built the same way as beckwell's CYBERNEURA-DEV-1143). `build.rs` embeds `ASTRAGAL_BUILD_DATE`
+(`YYYY-MM-DD HH:MM UTC`, or `SOURCE_DATE_EPOCH` if set), and `BUILD_DATE` in `lib.rs` reads it.
+tauri-build only emits `rerun-if-changed` for the config files, so a `rerun-if-changed` on a nonexistent path makes
+build.rs run every time (so that a build that changed only sources does not keep a stale date).
+About in the macOS app menu also opens the same About window as the tray, not the standard panel (`APP_MENU_ABOUT_ID`).
+The standard panel's version line is a single line "Version <ApplicationVersion> (<Version>)", and muda's `AboutMetadata` passes
+`version` outside the parentheses (ApplicationVersion) and `short_version` inside them (Version).
+There is no field for "build date on the line below the version", so do not go back to the standard panel.
 
-## 依存ライブラリのライセンス表示
+## License notices for dependencies
 
-`THIRD-PARTY-NOTICES.txt` は `scripts/generate-third-party-notices.sh` (`pnpm notices`) の生成物で、
-`lib.rs` が `include_str!` で埋め込み、トレイメニューの Third-Party Licenses (`licenses` ウインドウ)
-に出す。**依存を足す・上げる時は流し直してコミットする** (直接依存が載っていないと `cargo test` が
-落ちる)。Rust 側は cargo-about で、`src-tauri/about.toml` の `targets` で配布ターゲット
-(mac / Windows) だけに絞っている。cargo-about は `--features cli` を付けないとバイナリが入らない。
-npm 側は `package.json` の `dependencies` だけ (devDependencies は配布物に入らない)。
+`THIRD-PARTY-NOTICES.txt` is generated by `scripts/generate-third-party-notices.sh` (`pnpm notices`);
+`lib.rs` embeds it with `include_str!` and shows it in Third-Party Licenses in the tray menu (the `licenses` window).
+**When adding or upgrading dependencies, rerun it and commit the result** (`cargo test` fails if a direct
+dependency is missing). The Rust side uses cargo-about, narrowed to the distribution targets
+(mac / Windows) by `targets` in `src-tauri/about.toml`. cargo-about does not include the binary unless `--features cli` is passed.
+The npm side covers only `dependencies` in `package.json` (devDependencies are not shipped).
 
-## Settings ウインドウ (CYBERNEURA-DEV-1297)
+## Settings window (CYBERNEURA-DEV-1297)
 
-トレイの右クリックメニューと macOS のアプリメニュー (Cmd+,) の Settings… から開く。
-`about` / `licenses` と同じく開くたびに作り、閉じると破棄する。Flashcap の Preferences が手本。
-設計上の不変条件:
+Opened from Settings… in the tray's right-click menu and in the macOS app menu (Cmd+,).
+Like `about` / `licenses`, it is created each time it is opened and destroyed when closed. Flashcap's Preferences is the model.
+Design invariants:
 
-- **GUI が扱うのはローカルのファイルだけ。** `config_override_command` の結果 (マージ後の値) を
-  webview に渡さない・ファイルに書かない。上書きされたキーは起動時の `config::load` が
-  `LoadedConfig.override_keys` (ドット区切りの葉) に記録し、GUI は読み取り専用にし、
-  `settings::build_document` は保存時にそのキーだけ「ファイルにあった値」を写し直す
-  (GUI が何を送ってきても書き戻さない)。override のキーは起動時のものなので、
-  コマンドを変えても再起動までは古い一覧のまま
-- **API キー (`ai.api_key` / `tab_summary.api_key`) は値を webview に渡さない。**
-  スナップショットでは空にして「ファイルにあるか / override か」だけを返し、保存は
-  `keep` / `set` / `clear` で受ける。テキスト編集 (`settings_read_text`) だけはファイルを
-  そのまま見せる (利用者が明示的に開いた時だけ読む)
-- 読めないファイル (YAML の誤り・未知のキー) は書かない。`save` は書く前に今のファイルを
-  読み直し、読めなければ断る。書く内容も起動時と同じ `parse_config` で読めることを確かめる
-- 保存は既定値と同じ値・null を落とした YAML を構造から書き直す (コメントは消える)。
-  `hotkeys.*` の null (= 無効) は落とすと既定のホットキーが戻るので空文字で書く。
-  ウインドウの `hide_on_blur` は main と small で既定が違うので、フロントが既定と同じなら null を送る
-- 書き込みは `WRITE_LOCK` で直列化し、同じディレクトリの一時ファイルから rename。symlink は
-  canonicalize した先を書く。`<name>.bak` は無い時だけ作る (= 初回の上書き前)。元の権限を引き継ぐ
-- 設定は起動時に 1 回だけ読む (`AppState.config` は不変) ので、反映は再起動 (`settings_restart`
-  = `AppHandle::restart`)。ライブ反映にするなら `AppState.config` を Mutex にして、ホットキーの
-  登録し直しと各ウインドウへの通知が要る
-- `settings_*` のコマンドは `require_settings_window` で Settings ウインドウからの呼び出しに限る
-- override のテスト実行 (`settings_test_override`) はキーの数だけ返す。マージ結果が使えない時も
-  serde のメッセージ (値を含みうる) は出さずキーの名前だけ出す。実行の失敗も `override_failure` で
-  固定の文言 + 終了コードにする (元のエラーはコマンド全文と子の stderr を含み、値が混ざりうる)
-- 確認ダイアログは `window.confirm` ではなく自前の `<dialog>` (webview によって confirm が効かない)
-- Rust のテストは `settings.rs` の単体テスト (往復・override のキーを書き戻さない・API キーの keep / set / clear・
-  `.bak`・読めないファイル・symlink)。フロントの純粋な部品は `pnpm test:settings`。
-  **実機確認は未実施** (2026-11-17 時点)。このホストは GTK の .so が無く cargo test がリンクできないので、
-  config.rs と settings.rs を一時クレートに抜き出して回した
+- **The GUI handles only the local file.** Do not pass the result of `config_override_command` (the merged values) to the
+  webview, and do not write it to the file. The overridden keys are recorded by `config::load` at startup in
+  `LoadedConfig.override_keys` (dot-separated leaves); the GUI makes them read-only, and
+  `settings::build_document` copies back "the value that was in the file" for just those keys on save
+  (it does not write them back whatever the GUI sends). The override keys are those from startup, so
+  even if the command changes, the list stays the old one until restart
+- **The values of API keys (`ai.api_key` / `tab_summary.api_key`) are not passed to the webview.**
+  The snapshot leaves them empty and returns only "whether it is in the file / whether it is overridden", and saving
+  accepts `keep` / `set` / `clear`. Only text editing (`settings_read_text`) shows the file
+  as is (it is read only when the user explicitly opens it)
+- Unreadable files (YAML errors, unknown keys) are not written. `save` rereads the current file before
+  writing and refuses if it cannot be read. It also confirms that what it writes can be read with the same `parse_config` used at startup
+- Saving rewrites the YAML from the structure, dropping values equal to the defaults and nulls (comments are lost).
+  A null in `hotkeys.*` (= disabled) would bring back the default hotkey if dropped, so it is written as an empty string.
+  The window's `hide_on_blur` has different defaults for main and small, so the front end sends null when it equals the default
+- Writes are serialized with `WRITE_LOCK` and renamed from a temporary file in the same directory. For a symlink,
+  the canonicalized target is written. `<name>.bak` is created only when it does not exist (= before the first overwrite). The original permissions are carried over
+- Settings are read only once at startup (`AppState.config` is immutable), so changes take effect on restart (`settings_restart`
+  = `AppHandle::restart`). Making them apply live would require turning `AppState.config` into a Mutex, re-registering the
+  hotkeys and notifying each window
+- `settings_*` commands are restricted by `require_settings_window` to calls from the Settings window
+- The override test run (`settings_test_override`) returns only the number of keys. Even when the merged result cannot be used,
+  it does not show the serde message (which may contain values), only the key names. Execution failures are also turned by
+  `override_failure` into fixed text + exit code (the original error contains the full command and the child's stderr, which may include values)
+- The confirmation dialog is our own `<dialog>`, not `window.confirm` (confirm does not work in some webviews)
+- The Rust tests are unit tests in `settings.rs` (round trip, not writing back override keys, keep / set / clear for API keys,
+  `.bak`, unreadable files, symlinks). The pure front-end helpers are tested by `pnpm test:settings`.
+  **Not yet verified on a real machine** (as of 2026-11-17). This host has no GTK .so files and cargo test cannot link, so
+  config.rs and settings.rs were extracted into a temporary crate and run there
 
-## キーバインド
+## Key bindings
 
-Cmd 系は `document` のバブリングで拾っている。xterm は Cmd 付きのキーを pty へ
-流さないので、これで足りる。
+Cmd shortcuts are caught by bubbling on `document`. xterm does not pass keys with Cmd
+to the pty, so that is enough.
 
-**Ctrl 系はそうはいかない。** xterm は Ctrl の有無に関わらず Tab をタブ文字として
-pty へ送る (`xterm/src/common/input/Keyboard.ts` の keyCode 9) ため、Ctrl+Tab を
-バブリングで待つとシェルの補完が先に動く。xterm のリスナーは textarea に張られて
-いるので、`document` の **capture** で拾って `stopPropagation()` まで行う
-(`handleCycleKeydown`)。他の Ctrl 系を足す時も同じ扱いが要る。
+**Ctrl shortcuts are a different story.** xterm sends Tab to the pty as a tab character whether or not
+Ctrl is held (keyCode 9 in `xterm/src/common/input/Keyboard.ts`), so if you wait for Ctrl+Tab
+by bubbling, shell completion runs first. xterm's listener is attached to the textarea,
+so we catch it in the **capture** phase on `document` and go as far as `stopPropagation()`
+(`handleCycleKeydown`). Any other Ctrl shortcut you add needs the same treatment.
 
-Ctrl+Tab は最近使った順 (MRU) の巡回で、Ctrl を押している間は順序を固定したまま
-表示だけ動かし、Ctrl の keyup で確定する。ウインドウが背面へ回ると keyup が届かない
-ので `blur` でも確定する (吹き出しは blur で隠れるため必須)。
+Ctrl+Tab cycles in most-recently-used (MRU) order; while Ctrl is held the order is frozen and
+only the display moves, and it is committed on Ctrl's keyup. When the window goes to the background the keyup
+does not arrive, so it is also committed on `blur` (required, since the popover hides on blur).
 
-Cmd+Shift+[ / ] は iTerm2 と同じ「表示順で隣のタブへ」。MRU ではなくタブバーの
-並び順で動き、端では反対の端へ回り込む。判定は `key` (配列に従った文字) を先に見て、
-`code` (US 配列基準の物理位置) は保険にしている。JIS 配列では刻印 "[" のキーが
-`code: "BracketRight"` で来るため、`code` を優先すると左右が逆になる。macOS は Cmd を
-押している間 Shift を文字へ適用しないことがあるので、"[" と "{" の両方を受ける。
-`code` を見るのは `key` が文字を特定できなかった時 (`"Dead"` / `"Unidentified"` 等、
-1 文字にならない値) だけ。文字が取れているのに `code` へ落ちると、その位置に別の文字が
-載っている配列 (ドイツ語の `BracketRight` は "+") でタブ移動が誤爆する。
-Option (`altKey`) を弾くのも `code` で判定する側だけ。北欧系の配列は "[" / "]" の入力に
-Option が要る (Option+8 / Option+9) ので、`key` が文字として取れている側で弾くと
-そこから届かなくなる。
+Cmd+Shift+[ / ] is the same as iTerm2: "to the adjacent tab in display order". It moves in tab bar
+order, not MRU, and wraps around to the opposite end at the edges. The check looks at `key` (the character
+according to the layout) first, with `code` (the physical position based on the US layout) as a fallback. On the JIS layout
+the key labelled "[" arrives as `code: "BracketRight"`, so preferring `code` would swap left and right. macOS sometimes
+does not apply Shift to the character while Cmd is held, so both "[" and "{" are accepted.
+`code` is consulted only when `key` could not identify a character (values that are not a single character,
+such as `"Dead"` / `"Unidentified"`). Falling back to `code` when a character was obtained would misfire tab moves
+on layouts that put a different character in that position (`BracketRight` on German is "+").
+Option (`altKey`) is rejected only on the side that decides by `code`. Nordic layouts need
+Option to type "[" / "]" (Option+8 / Option+9), so rejecting it on the side where `key` yields a character
+would make those unreachable.
 
-Cmd+F / Cmd+G / Cmd+K はネイティブメニューのアクセラレータに奪われない (Tauri の既定
-メニューに Find 系・Clear 系の項目が無い)。メニューを足す時にこれらを割り当てると、
-WebView までキーが届かなくなり検索やクリアが効かなくなる。
-アプリメニューの Settings… には Cmd+, を付けている (ターミナルのキーバインドでは使っていない。
-使うようにする時はこのアクセラレータを外す)。
+Cmd+F / Cmd+G / Cmd+K are not stolen by native menu accelerators (Tauri's default
+menu has no Find or Clear items). If you assign these when adding menus,
+the keys no longer reach the WebView and search and clear stop working.
+Settings… in the app menu has Cmd+, (it is not used by the terminal key bindings.
+If you start using it there, remove this accelerator).
 
-Cmd+K (Windows は Ctrl+Shift+K) は `terminal.clear()` で、シェルには何も送らない
-(iTerm2 の Clear Buffer と同じ。Ctrl+L と違ってスクロールバックも消える)。代替バッファ
-(vim / less) の表示中は何もしない — xterm の `clear()` はアクティブなバッファを消すので、
-全画面アプリの描画だけが消えて操作は効く、という状態になるため。クリアは書き込みでも
-カーソル移動でもないので検索 addon の行キャッシュと件数が古いまま残る。`syncSearchAfterClear`
-が行キャッシュと検索語のキャッシュ (`clearDecorations()`) を捨てて数え直している。検索語の
-キャッシュが残っていると、addon は同じ語の再検索で全一致の再計算を省き、件数が古いまま返る。
+Cmd+K (Ctrl+Shift+K on Windows) is `terminal.clear()` and sends nothing to the shell
+(the same as iTerm2's Clear Buffer. Unlike Ctrl+L it also clears the scrollback). While the alternate
+buffer (vim / less) is shown it does nothing — xterm's `clear()` clears the active buffer,
+so only the full-screen app's drawing would disappear while its controls keep working. Clearing is neither a write
+nor a cursor move, so the search addon's line cache and match count stay stale. `syncSearchAfterClear`
+discards the line cache and the search-term cache (`clearDecorations()`) and recounts. If the search-term
+cache remains, the addon skips recomputing all matches when the same term is searched again, and returns the stale count.
 
-検索バーの Esc は入力欄にフォーカスがある時だけ効く。ターミナル側の Esc は vim 等の
-ためにそのまま pty へ流す。
+Esc in the search bar works only when the input field has focus. Esc on the terminal side is passed
+straight to the pty for vim and the like.
 
-`xterm-addon-search` 0.13 は行テキストのキャッシュをカーソル移動でしか捨てず、
-プロンプトが同じ位置へ戻ると新しい出力が検索に掛からない。`createSearchAddon` が
-書き込みのたびに非公開の `_destroyLinesCache` を呼んで回避している。
+`xterm-addon-search` 0.13 discards its line text cache only on cursor moves,
+so when the prompt returns to the same position new output is not searchable. `createSearchAddon`
+works around this by calling the private `_destroyLinesCache` on every write.
 
-## Mouse integration の ON / OFF (CYBERNEURA-DEV-1262)
+## Mouse integration ON / OFF (CYBERNEURA-DEV-1262)
 
-OFF にすると vim / tmux 等がマウスレポートを要求していてもクリック・ドラッグを pty へ送らず、
-ドラッグで範囲選択できる。設計上の前提:
+When OFF, clicks and drags are not sent to the pty even if vim / tmux and the like request mouse reports,
+and dragging selects a range. Design premises:
 
-- **xterm 5 には公開 API が無いので、非公開の `_core.coreMouseService` を使う** (`mouse-gate.ts`)。
-  インスタンスに `activeProtocol` のアクセサを置いて prototype のものを隠し、アプリの要求
-  (DECSET 9 / 1000 / 1002 / 1003、DECRST、リセット) を全部覚える。OFF の間は xterm に渡さず NONE のまま、
-  ON に戻したら覚えておいたプロトコルを入れ直す。`@xterm/*` へ移る時はここも確かめ直す。
-  形が想定と違えば `MouseGate.attach` が null を返し、警告を出して何もしない (ボタンが効かなくなるだけ)
-- **一度 xterm に渡してから `onProtocolChange` で NONE に戻す方式にしないこと。** xterm 自身の
-  リスナーが先に動いて `SelectionService.disable()` が選択範囲を消すので、tmux のようにモードを
-  送り直すアプリだと OFF で選択している最中に選択が消える (Codex のレビューで指摘)
-- CSI ハンドラで DECSET を握りつぶす方式も採らなかった。`\x1b[?1049;1000h` のように他のモードと
-  混ざったシーケンスを、マウスの分だけ捨てて同じ位置で処理させる手段が無い
-- 状態はアプリ全体で 1 つ、Rust がメモリに持つ (再起動で ON)。ボタン・トレイ・View メニューの
-  どれも `mouse_integration::set` を通り、チェック表示を揃えて `mouse-integration-changed` を
-  全ウインドウへ emit する。small にボタンは無いが状態には従う
-- トレイと View の項目の id は分ける (メニューイベントのハンドラが両方のイベントを受けるので、
-  同じ id だと 1 回で 2 回切り替わる)。メニューにアクセラレータは付けない
-- `pnpm test:mouse` は偽の CoreMouseService での単体テスト。本物の xterm 5.3 では、ヘッドレス
-  Chromium (Web フォントを読ませないと open() でクラッシュする) で 1002 / 1006 / 1049;1003 を書いて
-  ドラッグし、OFF で選択・ON で SGR のマウスレポートになること、OFF で選択中にモードを送り直されても選択が残ることを確かめた (2026-11-13)。実機は未確認
+- **xterm 5 has no public API, so the private `_core.coreMouseService` is used** (`mouse-gate.ts`).
+  An `activeProtocol` accessor is put on the instance to shadow the prototype's, and every request from the app
+  (DECSET 9 / 1000 / 1002 / 1003, DECRST, reset) is remembered. While OFF they are not passed to xterm and it stays NONE;
+  when switched back ON the remembered protocol is reinstated. Recheck this when moving to `@xterm/*`.
+  If the shape differs from what is expected, `MouseGate.attach` returns null, warns and does nothing (the button just stops working)
+- **Do not switch to passing the mode to xterm first and then resetting it to NONE in `onProtocolChange`.** xterm's own
+  listener runs first and `SelectionService.disable()` clears the selection, so with apps that resend the mode, like tmux,
+  the selection disappears in the middle of selecting while OFF (pointed out in Codex's review)
+- Swallowing DECSET in a CSI handler was not adopted either. For sequences mixed with other modes, like
+  `\x1b[?1049;1000h`, there is no way to drop only the mouse part and have the rest processed in the same place
+- There is one state for the whole app, held in memory by Rust (ON after restart). The button, the tray and the View menu
+  all go through `mouse_integration::set`, which keeps the check marks in sync and emits `mouse-integration-changed`
+  to all windows. small has no button but follows the state
+- The ids of the tray and View items are separate (the menu event handler receives events from both, so
+  with the same id a single click would toggle twice). The menus have no accelerators
+- `pnpm test:mouse` is a unit test with a fake CoreMouseService. With the real xterm 5.3, in headless
+  Chromium (it crashes in open() unless web fonts are loaded), we wrote 1002 / 1006 / 1049;1003 and
+  dragged, and confirmed that OFF selects, ON produces SGR mouse reports, and the selection survives the mode being resent while selecting with OFF (2026-11-13). Not checked on a real machine
 
-## インライン画像 (CYBERNEURA-DEV-976)
+## Inline images (CYBERNEURA-DEV-976)
 
-`xterm-addon-image` (0.5.0、legacy の `xterm` 5.x 向けの最終版) で iTerm2 の Inline Image
-Protocol (OSC 1337、imgcat が出す) と SIXEL を描く。このリポジトリは scoped でない
-`xterm` / `xterm-addon-*` で揃えているので、`@xterm/addon-image` は使えない (別パッケージの
-`Terminal` を要求する)。`@xterm/*` へ一括で移行する時に一緒に載せ替える。
+`xterm-addon-image` (0.5.0, the last version for the legacy `xterm` 5.x) draws iTerm2's Inline Image
+Protocol (OSC 1337, emitted by imgcat) and SIXEL. This repository uses the unscoped
+`xterm` / `xterm-addon-*` throughout, so `@xterm/addon-image` cannot be used (it requires the `Terminal`
+from a different package). Switch it over together when migrating to `@xterm/*` in one go.
 
-- 画像は addon が `.xterm-screen` に重ねる自前のキャンバスに描くので、レンダラーは既定の
-  DOM のままでよい (canvas / webgl addon は要らない)
-- **`size=` は実際のバイト数と一致していないと無言で捨てられる** (addon の base64 デコーダが
-  宣言サイズで判定する)。imgcat は `wc -c` の値を送るので合う。手で試す時は注意
-- pty からは 4096 バイトずつ届く (`lib.rs` の reader thread) が、OSC は xterm のパーサーが
-  跨いで組み立てるので分割は問題にならない
-- `storageLimit` はタブ 1 つあたり。addon は画像を RGBA で保持するので、既定の 128 MB を
-  64 MB に下げている (`createImageAddon`)
-- 実機は無いが、`Terminal` + `ImageAddon` だけの harness をリモート Chrome に読ませれば
-  描画まで実測できる (2026-10-08 に PNG の IIP と SIXEL を確認。size をずらすと落ちることも
-  同じ方法で確認した)
+- The addon draws images on its own canvas overlaid on `.xterm-screen`, so the renderer can stay the
+  default DOM one (no canvas / webgl addon needed)
+- **If `size=` does not match the actual byte count, the image is silently dropped** (the addon's base64 decoder
+  decides by the declared size). imgcat sends the `wc -c` value, so it matches. Take care when trying it by hand
+- The pty delivers 4096 bytes at a time (the reader thread in `lib.rs`), but xterm's parser assembles OSC across
+  chunks, so the split is not a problem
+- `storageLimit` is per tab. The addon keeps images as RGBA, so the default 128 MB is lowered to
+  64 MB (`createImageAddon`)
+- There is no real machine, but loading a harness of just `Terminal` + `ImageAddon` into the remote Chrome lets you
+  measure everything up to drawing (on 2026-10-08 PNG over IIP and SIXEL were confirmed. That a mismatched size makes it drop
+  was confirmed the same way)
 
-## ドロップして scp で送る (CYBERNEURA-DEV-1177)
+## Drop to send with scp (CYBERNEURA-DEV-1177)
 
-アクティブなタブの pty の前面のプロセスグループのリーダーが `ssh` の時だけ、ドロップした
-ファイルを scp でそのホストへ送る。設計上の前提:
+Only when the leader of the foreground process group of the active tab's pty is `ssh`, dropped
+files are sent to that host with scp. Design premises:
 
-- **ssh かどうかと接続先は Rust だけが決める。** `MasterPty::process_group_leader` (tcgetpgrp) の
-  PID の argv を、macOS は `sysctl(KERN_PROCARGS2)`、Linux は `/proc/<pid>/cmdline` で読み、
-  `remote_drop::parse_ssh_argv` が ssh.c と同じ getopt の規則で解釈する (接続先の後ろのオプションも
-  読み直す。`ssh host -p 2222` が通る)。フロントはタブ id と、確認ダイアログを出した時の `key`
-  (`SshTarget::identity` = PID + scp に渡すオプション + ホスト) しか渡さない。送る直前に読み直して比べ、確認の間に
-  ssh を抜けた・繋ぎ直した時は断る。表示用の `label` では比べない (`-o HostName` や `-F` の違いが出ないため)
-- 接続に効くオプションだけを scp に写す。**ssh の優先順位を崩さないこと。** ssh は user / port を
-  「まだ決まっていなければ」で埋める (`-l` / `-p` / `-o User` / `-o Port` / 接続先の中の値は先に出たものが勝つ) ので、
-  全部 `-o User=` / `-o Port=` にして argv の順のまま渡し、内側の ssh に選ばせる (scp の `-P` は使わない)。
-  `-S/-b/-B/-m/-I/-P` は ssh が後から上書きする (後勝ち) ので、最後の値だけを `-o` にして先頭に置く。
-  `-c/-F/-i/-J/-o` はそのまま。相対パスの `-F` は ssh の作業ディレクトリで読まれるので、対象外にする。転送 (`-L/-R/-D/-w`) は捨てる。`-o RemoteCommand` / `RequestTTY` 等は
-  scp と両立しないので捨てる。`-G/-V/-Q/-O/-W/-f` を含む起動 (対話の接続ではない) と、知らない
-  オプションを含む起動は対象外。tmux / mosh / autossh 越しの ssh は前面のプロセスが ssh ではないので出ない
-- scp は `-o BatchMode=yes` で、標準入力も閉じて起動する。GUI から起動した scp には端末が無く、
-  パスワードを尋ねられると答えようがない (止まったままになる)。鍵・エージェント・ssh の
-  ControlMaster で繋いでいる接続先だけで送れる。エージェントのソケットは ssh のプロセスの環境変数の
-  `SSH_AUTH_SOCK` を引き継ぐ (シェルの rc で 1Password 等に向けているとアプリの環境と違うため)
-- 送り先は確認ダイアログで決める (既定は `~` = ホーム)。ディレクトリ名の末尾に `/` を付けるので、
-  無いディレクトリを指定するとその名前のファイルを作らずに失敗する。ディレクトリを含むと `-r`。
-  送り元は `--` の後ろに置く (ドロップされるパスは絶対パスなので、`:` を含んでもリモート扱いにならない)
-- ssh の cwd は見ていない。`-i` に相対パスを渡した ssh だと scp が鍵を見つけられないことがある (送り先は変わらない)
-- Windows は対象外 (ConPTY の前面のプロセスを取れない。`remote_drop_target` が常に `None`)
-- macOS の `process_args` (sysctl) はこのリポジトリの Linux 環境では検査できない。`parse_procargs2` は
-  純粋な関数にしてテストしてある。ドラッグの見た目はリモート Chrome に Tauri API をモックした
-  harness で確認した (2026-10-30)。実機での確認は未実施
+- **Only Rust decides whether it is ssh and what the destination is.** It reads the argv of the PID from
+  `MasterPty::process_group_leader` (tcgetpgrp) — via `sysctl(KERN_PROCARGS2)` on macOS and `/proc/<pid>/cmdline` on Linux — and
+  `remote_drop::parse_ssh_argv` interprets it with the same getopt rules as ssh.c (it also rereads options after the
+  destination, so `ssh host -p 2222` works). The front end passes only the tab id and the `key` from when the confirmation dialog was shown
+  (`SshTarget::identity` = PID + the options to pass to scp + host). It is reread and compared right before sending, and if
+  ssh exited or reconnected during the confirmation, the send is refused. The display `label` is not used for comparison (it does not reflect differences in `-o HostName` or `-F`)
+- Only options that affect the connection are copied to scp. **Do not break ssh's precedence.** ssh fills user / port
+  "only if not yet decided" (for `-l` / `-p` / `-o User` / `-o Port` / the value inside the destination, the first one wins), so
+  they are all turned into `-o User=` / `-o Port=` and passed in argv order, letting the inner ssh choose (scp's `-P` is not used).
+  `-S/-b/-B/-m/-I/-P` are overwritten later by ssh (last one wins), so only the last value is turned into `-o` and placed first.
+  `-c/-F/-i/-J/-o` are passed as is. A relative `-F` is read relative to ssh's working directory, so it is excluded. Forwardings (`-L/-R/-D/-w`) are dropped. `-o RemoteCommand` / `RequestTTY` and the like are
+  incompatible with scp and dropped. Launches that include `-G/-V/-Q/-O/-W/-f` (not interactive connections) and launches with unknown
+  options are excluded. ssh through tmux / mosh / autossh does not qualify, since the foreground process is not ssh
+- scp is launched with `-o BatchMode=yes` and with stdin closed. scp launched from the GUI has no terminal,
+  so if it is asked for a password there is no way to answer (it stays stuck). Sending works only to destinations connected via keys, an agent or ssh's
+  ControlMaster. The agent socket inherits `SSH_AUTH_SOCK` from the environment of the ssh process
+  (if the shell rc points it at 1Password or similar, it differs from the app's environment)
+- The destination is decided in the confirmation dialog (default `~` = home). A `/` is appended to the directory name, so
+  specifying a nonexistent directory fails rather than creating a file with that name. If directories are included, `-r` is used.
+  Sources are placed after `--` (dropped paths are absolute, so they are not treated as remote even if they contain `:`)
+- ssh's cwd is not looked at. If ssh was given a relative path for `-i`, scp may not find the key (the destination does not change)
+- Windows is out of scope (the ConPTY foreground process cannot be obtained. `remote_drop_target` is always `None`)
+- macOS's `process_args` (sysctl) cannot be tested in this repository's Linux environment. `parse_procargs2` is
+  made a pure function and tested. The look of the drag was checked with a harness that mocks the Tauri API in the remote
+  Chrome (2026-10-30). Not yet checked on a real machine
 
-## コマンドライン (`astragal -e`)
+## Command line (`astragal -e`)
 
-`/usr/local/bin/astragal` は .app の中のバイナリへのシンボリックリンク (トレイメニューの
-Install 'astragal' Command in PATH で作る)。設計上の前提:
+`/usr/local/bin/astragal` is a symbolic link to the binary inside the .app (created by
+Install 'astragal' Command in PATH in the tray menu). Design premises:
 
-- **ターミナルから直接起動されたら `open -n -a` で起動し直す** (`relaunch_from_terminal`)。
-  未起動の時にそのまま本体になると、ターミナルの子として残り、タブを閉じた時の SIGHUP で
-  落ちる。判定は「親が launchd (pid 1) でない」かつ「.app の中で動いている」。dev 実行
-  (`pnpm tauri dev`) はバンドルの外なので起動し直さない
-- 起動し直したプロセスの cwd は `/` なので、`-e` の開始位置は `--working-directory=` で
-  明示して渡す。起動済みなら、起動し直したプロセスが single-instance の Unix ソケットで
-  本体へ argv を送って終わる (cwd も送られるが `/` なので使えない)
-- 本体はタブを開く要求を `AppState.launch_requests` に積み、main の front が id で
-  `create_terminal` に渡して取り出す。front が起動前でも取りこぼさないように、イベント
-  (`launch-requested`) と `pending_launches` の両方から拾い、front 側で重複を除く。
-  イベントは `present_window` の前に送る (後だと `window-shown` の補充で空のタブが増える)
-- `-e` は xterm / Ghostty と同じく残りの引数をすべて取る。iTerm2 に相当する CLI は無い
-- **Windows の single-instance は argv を `|` で連結・分割して送る** (plugin 2.4.3 の
-  `platform_impl/windows.rs`)。パイプ入りの `-e` が割れるので、引数に `|` があれば
-  `--exec-base64=` に包んで自分を起動し直してから送る (`forward_without_pipes`)。
-  包むのはコマンドだけなので、作業ディレクトリに `|` が残る時は起動し直さずにそのまま
-  続ける (起動し直した先でも `|` が見つかり、起動し直しが終わらなくなる)。
-  Windows で `-e` の後ろに複数の引数を取らないのは、cmd と PowerShell で引用の規則が違うため
-- `--minimized` / `--help` の判定も `cli::parse` を通す。argv 全体を探すと `-e` の
-  コマンドの引数に反応する
-- **Windows のリリース版は GUI サブシステム** (`main.rs` の `windows_subsystem`) なので
-  stderr / stdout はどこにも出ない。利用者に見せる CLI の出力 (`--help`・引数の誤り) は
-  起動してからダイアログで出す (`report_cli_help` / `report_cli_error`)
-- 実機で試す時は、インストール済みの Astragal を終了しておく。single-instance のソケット
-  (`/tmp/com_cyberneura_astragal_si.sock`) は identifier だけで決まり、ビルド版の引数が
-  インストール版へ送られてしまう
+- **When launched directly from a terminal, relaunch with `open -n -a`** (`relaunch_from_terminal`).
+  If it became the main instance as is when not yet running, it would remain a child of the terminal and die from
+  SIGHUP when the tab is closed. The check is "the parent is not launchd (pid 1)" and "running inside the .app". Dev runs
+  (`pnpm tauri dev`) are outside the bundle and are not relaunched
+- The cwd of the relaunched process is `/`, so the starting location for `-e` is passed explicitly with
+  `--working-directory=`. If already running, the relaunched process sends its argv to the main instance over the single-instance
+  Unix socket and exits (the cwd is sent too, but it is `/` and cannot be used)
+- The main instance queues tab-open requests in `AppState.launch_requests`, and main's front end passes the id to
+  `create_terminal` to take them out. So that nothing is missed even before the front end starts, they are picked up from both the event
+  (`launch-requested`) and `pending_launches`, and duplicates are removed on the front-end side.
+  The event is sent before `present_window` (if sent after, the `window-shown` refill adds an empty tab)
+- `-e` takes all remaining arguments, like xterm / Ghostty. iTerm2 has no equivalent CLI
+- **On Windows, single-instance sends argv joined and split on `|`** (`platform_impl/windows.rs` in plugin 2.4.3).
+  An `-e` containing a pipe would be split, so if an argument contains `|`, it wraps it in
+  `--exec-base64=`, relaunches itself and then sends it (`forward_without_pipes`).
+  Only the command is wrapped, so if a `|` remains in the working directory, it continues as is without
+  relaunching (otherwise the relaunched process would find `|` too, and the relaunching would never end).
+  On Windows `-e` does not take multiple arguments after it because cmd and PowerShell have different quoting rules
+- The `--minimized` / `--help` checks also go through `cli::parse`. Searching the whole argv would react to the
+  arguments of the `-e` command
+- **The Windows release build uses the GUI subsystem** (`windows_subsystem` in `main.rs`), so
+  stderr / stdout go nowhere. CLI output shown to users (`--help`, argument errors) is
+  shown in a dialog after starting (`report_cli_help` / `report_cli_error`)
+- When trying it on a real machine, quit the installed Astragal first. The single-instance socket
+  (`/tmp/com_cyberneura_astragal_si.sock`) is determined only by the identifier, so the arguments of your build would be
+  sent to the installed version
 
 ## Ask AI (CYBERNEURA-DEV-898)
 
-Warp の自然言語コマンド入力に相当する機能。設計上の不変条件:
+The equivalent of Warp's natural-language command input. Design invariants:
 
-- **既定は無効** (`ai.enabled: false`)。外部へテキストを送る機能なので、依頼者の指示で
-  スイッチにしている。無効ならバーも作らず Cmd+I は何もしない
-- **実行しない。** 応答はまずバーに表示し、もう一度 Enter で `terminal.paste()` するだけ。
-  pty に Enter は送らない。表示を挟むのは、貼り付け先がシェルのプロンプトか確かめる手段が
-  無いため (代替バッファかどうかしか分からない)。
-  改行・制御文字を含む応答は `ai.rs` の `parse_reply` で弾く (改行は pty では Enter と同じ)。
-  代替バッファ (vim 等) の表示中も打ち込まない
-- **送るのは依頼文・OS 名・シェル名・バーを開いた時の選択テキストだけ。** スクロールバックを
-  黙って送らない。選択を送る時はバーに表示する
-- 対象タブと選択はバーを開いた時に固定し、タブが切り替わったら閉じる (`syncAiWithActiveTab`)。
-  別タブの選択を送る・見えていないタブへ貼り付ける、を防ぐため
-- API キーは Rust 側だけに置き、`FrontendConfig` には `ai_enabled` しか渡さない。
-  `AiConfig` の Debug はキーを伏せている
-- HTTP は reqwest (tauri が既に引いている 0.13) を `native-tls` で使う。既定の rustls は
-  aws-lc-rs を引き、Windows のビルドに cmake / nasm が要るため避けた
-- 既定モデルは `claude-opus-5` + `effort: low`。モデルを変える時、Haiku 4.5 のように
-  effort を受け付けないモデルは `effort: ""` が要る (送ると 400)
+- **Disabled by default** (`ai.enabled: false`). It sends text outside, so it is a switch, as instructed
+  by the requester. When disabled the bar is not even created and Cmd+I does nothing
+- **It does not execute.** The reply is first shown in the bar, and a second Enter only does `terminal.paste()`.
+  No Enter is sent to the pty. The display step is there because there is no way to confirm that the paste target is a shell prompt
+  (we can only tell whether the alternate buffer is active).
+  Replies containing newlines or control characters are rejected by `parse_reply` in `ai.rs` (a newline is the same as Enter in a pty).
+  Nothing is typed while the alternate buffer (vim etc.) is shown either
+- **Only the request text, the OS name, the shell name and the text selected when the bar was opened are sent.** The scrollback is not
+  sent silently. When the selection is sent, it is shown in the bar
+- The target tab and the selection are fixed when the bar opens, and the bar closes if the tab changes (`syncAiWithActiveTab`).
+  This prevents sending another tab's selection or pasting into a tab that is not visible
+- The API key lives only on the Rust side; `FrontendConfig` receives only `ai_enabled`.
+  The Debug impl of `AiConfig` masks the key
+- HTTP uses reqwest (0.13, already pulled in by tauri) with `native-tls`. The default rustls
+  pulls in aws-lc-rs, which needs cmake / nasm for the Windows build, so it was avoided
+- The default model is `claude-opus-5` + `effort: low`. When changing models, models that do not accept effort, such as
+  Haiku 4.5, need `effort: ""` (sending it returns 400)
 
-## Agent chat (main の右ペイン)
+## Agent chat (main's right pane)
 
-`src/chat/pane.ts` が UI とタブごとの会話を持ち、`src/chat/beckwell/` は Beckwell の
-stream-json / app-server の共通エンジンと Markdown 描画のコピー。移植元の revision と
-差分は `docs/beckwell-chat.md`。Rust の `agent_process.rs` は子プロセスと JSON 行の中継、
-`chat_window.rs` は幅の拡張と復元。small には作らない。
+`src/chat/pane.ts` owns the UI and the per-tab conversations, and `src/chat/beckwell/` is a copy of Beckwell's
+shared stream-json / app-server engine and Markdown rendering. The source revision and the
+differences are in `docs/beckwell-chat.md`. Rust's `agent_process.rs` relays the child process and JSON lines,
+and `chat_window.rs` widens and restores the window. It is not created in small.
 
-- `#workspace` の左 `#terminal-pane` にタブバー・サマリー・ターミナルを収め、右のチャットは
-  ウインドウ上端から使う。チャットのヘッダーは provider / path / context のコンパクトな 3 行
-- Follow はタブごとに既定 OFF。Codex の `turn/start.cwd` で次の送信時にローカル OSC 7 の cwd を
-  渡し、thread は維持する。実行中は変更しない。OFF では表示中の cwd を固定する。
-  remote の OSC 7 は cwd を不明に戻し、追従中に不明なら送信を止める。
-  Claude は実行中の cwd 変更をサポートしていないためスイッチを無効にする
+- `#terminal-pane` on the left of `#workspace` holds the tab bar, summary and terminal, and the chat on the right
+  uses the window from its top edge. The chat header is a compact 3 lines: provider / path / context
+- Follow is OFF by default per tab. With Codex's `turn/start.cwd`, the local OSC 7 cwd is passed on the next send,
+  and the thread is kept. It is not changed while running. When OFF, the cwd being shown is fixed.
+  A remote OSC 7 resets the cwd to unknown, and if it is unknown while following, sending is stopped.
+  Claude does not support changing the cwd while running, so the switch is disabled
 
-- `agent_chat` の既定は有効だが、開いただけではターミナル出力を送らない。送信のたびに
-  `TerminalContext.snapshot` で最後の完了済み N ターンを選び、その後にブラックリストで
-  ターン全体を除外する。除外分を古いターンで補充しない。設定の blacklist は追加分だけ
-- `shell_integration.rs` は main の対話 zsh に一時 ZDOTDIR を渡し、ユーザーの dotfile を
-  読んでから OSC 133 の A/C/D と OSC 7 の cwd を出す。元の dotfile は編集しない。
-  境界が分からないシェルでは履歴を推測して送らない。`-e` は対象外
-- 生出力を分割 UTF-8 / OSC の境界を跨いで読む。未完了ターンと 131,072 UTF-16 code units を超えるターンを
-  送らない。保持は最大 20 ターン。これは Astragal の添付範囲の制限であり、エージェントの
-  独立したファイルアクセスのサンドボックスではない
-- 書き戻しは最終応答の `astragal-terminal` コードブロック 1 個、単一行だけ。
-  `result.finalText` だけを使う。Claude は result の本文、Codex は最後の完了済み回答
-  (commentary / partial_answer を除外し、後続の tool / reasoning で無効化) から取る。
-  Enter は送らない。送信時のタブ・入力 revision・通常バッファ・空のプロンプト・表示中の
-  ペインを全て確かめる。中断した応答からは書き戻さない
-- 手動入力は完了済み回答のコードブロックごとのアイコンから行う。自動書き戻しと違い
-  入力 revision・空プロンプトは要求しない。表示中の同じタブの通常バッファへ貼り付け、
-  Enter は追加しない。改行・タブを含むブロックは bracketed paste が有効な時だけ許可する
-- CLI の承認方針を緩めない。承認と質問は Beckwell のプロトコルで UI に出す。会話を
-  作り直すと process ID を変え、古いプロセスの非同期 callback でも状態を書き換えない
-  (await 後にも世代を確認する)。承認・質問の decision は送信前に UI 側で設定する。
-  プロトコルは送信失敗時に pending へ戻すだけなので、UI 側での二重送信防止が必要
-- pane を閉じてもプロセスは残す。タブを閉じる・New chat・アプリ終了・フロントの
-  再初期化で終了させる。SIGTERM の後に期限付き SIGKILL へ進む
-- 応答中 (`busy`、または起動中) に送った文は `Conversation.queue` に積み (`src/chat/queue.ts`、Beckwell の
-  `src/lib/chat/queue.ts` の移植)、入力欄の上に一覧を出す。送られるまで textarea で書き換えられ、↑ で 1 つ上に
-  空行を挟んで連結、× で取り除く。host の `setBusy(false)` / `setReady(true)` から `setTimeout(0)` で `pump` し、
-  `canDispatch` が通れば先頭を 1 つだけ `dispatch` (直接送るのと同じ処理) に渡す。microtask にしないのは、
-  Claude が result を push する前に `setBusy(false)` を呼ぶため (microtask だと `complete` (書き戻し) より先に次の
-  送信が `revision` を書き換え、前のターンのコマンドが貼られうる)。プロトコルは書き込みの失敗や Codex の
-  `turn/start` の拒否を `send()` の reject ではなく「result を出さずに idle に戻る」で返すので、`dispatch` が
-  `inFlight` を置き、result の push で消し、idle 後の macrotask でまだ残っていれば始まらなかったターンとして
-  扱う。列は保留にし、項目を列に戻すのはエージェントが受け付けていない (`turnStarted` が来ていない) 時だけ
-  (受け付け後に Codex の error 通知で終わったターンはコマンドを実行済みかもしれず、Resume で再送すると二重に実行する)。
-  `turnStarted` は Beckwell のコピーに足した host のコールバック (Claude は stdin への書き込み成功、Codex は
-  `turn/start` の応答)ターミナルの共有範囲は実際に送る時点で取る。
-  Stop (`interrupt`) と New chat / 再起動 (`restart`。Codex の Stop 後の復旧もここを通る) は `queueHeld` を立て、
-  Resume か入力欄からの直接送信で解く。空の列に積む時も解く。列が残っている間 (保留でなければ) は直接送らずに
-  後ろへ積む (先に積んだ指示を追い越さない)。送れなかった (Follow で cwd が不明等) ら先頭に戻して保留にする
-  (ループで再送しない)。列の行は id ごとに使い回し、位置が違う時だけ動かす (編集中の textarea のフォーカスを
-  落とさない)。列は画面の状態だけで、タブを閉じると消える
-- ログの自動スクロールは「利用者が上へ動かしたら止め、下端 (32px 以内) に戻ったら再開」(`src/chat/scroll.ts`、
-  Beckwell の `src/lib/chat/scroll.ts` (CYBERNEURA-DEV-1116) の移植。CYBERNEURA-DEV-1308)。以前は描画のたびに
-  「下端から 64px 以内なら末尾へ送る」で決めていて、ストリーミング中はホイール 1 回の移動がその範囲に収まり、
-  次の描画で末尾へ引き戻されて上へスクロールできなかった。位置は scroll イベントごとに控え、末尾へ送った直後の
-  位置も控える (同じフレームでの上方向の操作を拾うため)。会話の切り替えと自分の送信では追従を戻す
-- thinking の項目は本文を出さず、考えている間 (`streaming` かつ `busy`) だけ ✦ と 1 文字ずつ波打つ「Thinking…」を
-  出し、終わったら行ごと隠す (Beckwell の activity 行と同じ動き。CYBERNEURA-DEV-1308)。本文の差分のたびに描き直すと
-  アニメーションが頭から始まり直すので、thinking の行の signature は表示状態だけにしている。`busy` を条件に入れて
-  いるのは、閉じられずに終わったストリーム (プロセスの終了) で表示が残り続けないようにするため。さらに最後の user の
-  発言より後の項目に限る (閉じられなかった前のターンの thinking が、次の送信で busy に戻った時に再表示されないように)
-- `pnpm test:chat` は共有範囲と書き戻しのテスト。`tests/agent-smoke.mjs` は実 CLI に合成の
-  接続確認だけを送る任意テスト。ネットワークと通常の資格情報へのアクセスが必要
+- `agent_chat` is enabled by default, but just opening it does not send terminal output. On every send
+  `TerminalContext.snapshot` picks the last N completed turns, and then whole turns are excluded by the blacklist.
+  Excluded turns are not backfilled with older turns. The blacklist in the settings is only additions
+- `shell_integration.rs` passes a temporary ZDOTDIR to main's interactive zsh, which reads the user's dotfiles
+  and then emits OSC 133 A/C/D and the OSC 7 cwd. The original dotfiles are not edited.
+  In shells whose boundaries are unknown, history is not guessed and sent. `-e` is out of scope
+- Raw output is read across split UTF-8 / OSC boundaries. Incomplete turns and turns exceeding 131,072 UTF-16 code units
+  are not sent. At most 20 turns are kept. This is a limit on what Astragal attaches, not a sandbox
+  for the agent's own independent file access
+- Writing back takes exactly one `astragal-terminal` code block in the final reply, single-line only.
+  Only `result.finalText` is used. For Claude it comes from the result body; for Codex from the last completed answer
+  (excluding commentary / partial_answer, and invalidated by subsequent tool / reasoning).
+  No Enter is sent. The tab at send time, the input revision, the normal buffer, an empty prompt and the visible
+  pane are all checked. Nothing is written back from an interrupted reply
+- Manual input is done from the icon on each code block of a completed answer. Unlike automatic writing back, it
+  does not require the input revision or an empty prompt. It pastes into the normal buffer of the same visible tab and
+  adds no Enter. Blocks containing newlines or tabs are allowed only when bracketed paste is enabled
+- Do not loosen the CLI's approval policy. Approvals and questions are shown in the UI via Beckwell's protocol. Rebuilding a
+  conversation changes the process ID, and even asynchronous callbacks from an old process must not modify state
+  (check the generation after an await as well). The decision for an approval or question is set on the UI side before sending.
+  The protocol only puts it back to pending on send failure, so the UI side must prevent double sends
+- Closing the pane leaves the process running. It is terminated by closing the tab, New chat, quitting the app, or
+  reinitializing the front end. After SIGTERM it proceeds to a time-limited SIGKILL
+- Text sent while a reply is in progress (`busy`, or while starting) is queued in `Conversation.queue` (`src/chat/queue.ts`, a port of Beckwell's
+  `src/lib/chat/queue.ts`) and listed above the input field. Until sent it can be edited in a textarea; ↑ joins it with the one above
+  with a blank line in between, and × removes it. From the host's `setBusy(false)` / `setReady(true)`, `pump` runs via `setTimeout(0)`, and
+  if `canDispatch` passes, exactly one item from the head is handed to `dispatch` (the same processing as sending directly). It is not a microtask because
+  Claude calls `setBusy(false)` before pushing the result (with a microtask, the next send would rewrite `revision` before
+  `complete` (writing back), and the previous turn's command could be pasted). The protocol reports write failures and Codex's
+  rejection of `turn/start` not as a reject of `send()` but as "returning to idle without emitting a result", so `dispatch` sets
+  `inFlight`, the result push clears it, and if it still remains in the macrotask after idle it is treated as a turn that
+  never started. The queue is put on hold, and an item is returned to the queue only when the agent has not accepted it (`turnStarted` has not arrived)
+  (a turn that ended with a Codex error notification after being accepted may already have run the command, and resending it on Resume would run it twice).
+  `turnStarted` is a host callback added to the Beckwell copy (for Claude, a successful write to stdin; for Codex, the
+  `turn/start` response). The terminal sharing scope is taken at the moment it is actually sent.
+  Stop (`interrupt`) and New chat / restart (`restart`; recovery after Codex's Stop also goes through here) set `queueHeld`,
+  which is cleared by Resume or a direct send from the input field. It is also cleared when queuing onto an empty queue. While items remain (and it is not on hold),
+  direct sends are not sent but appended to the end (so they do not overtake earlier instructions). If an item could not be sent (e.g. the cwd is unknown with Follow), it is put back at the head and the queue is put on hold
+  (it is not resent in a loop). Queue rows are reused per id and moved only when their position differs (so an edited textarea
+  does not lose focus). The queue is screen state only and disappears when the tab is closed
+- Log auto-scrolling is "stop when the user scrolls up, resume when back at the bottom (within 32px)" (`src/chat/scroll.ts`,
+  a port of Beckwell's `src/lib/chat/scroll.ts` (CYBERNEURA-DEV-1116); CYBERNEURA-DEV-1308). Previously every render decided
+  "scroll to the end if within 64px of the bottom", and during streaming a single wheel movement stayed within that range,
+  so the next render pulled it back to the end and you could not scroll up. The position is recorded on every scroll event, and the position right after
+  scrolling to the end is recorded as well (to catch upward movement in the same frame). Switching conversations and your own sends restore following
+- Thinking items do not show their body; only while thinking (`streaming` and `busy`) do they show ✦ and a "Thinking…" that waves
+  one character at a time, and the whole row is hidden when done (the same behaviour as Beckwell's activity row; CYBERNEURA-DEV-1308). Redrawing on every body
+  delta would restart the animation from the beginning, so the signature of a thinking row is only its display state. `busy` is part of the condition
+  so that the display does not linger for a stream that ended without being closed (the process exiting). It is further limited to items after the last user
+  message (so that an unclosed thinking from the previous turn is not shown again when the next send returns to busy)
+- `pnpm test:chat` tests the sharing scope and writing back. `tests/agent-smoke.mjs` is an optional test that sends only a synthetic
+  connectivity check to the real CLI. It needs network access and access to the usual credentials
 
-## タブ名と要約 (CYBERNEURA-DEV-1197)
+## Tab names and summaries (CYBERNEURA-DEV-1197)
 
-出力のあったタブの末尾 120 行を LLM に渡し、タブ名 (全角 10 / 半角 20 文字) と 1〜2 文の要約を
-作らせる。設計上の前提:
+The last 120 lines of a tab that had output are passed to an LLM, which produces a tab name (10 full-width / 20 half-width characters) and a 1–2 sentence
+summary. Design premises:
 
-- **既定は無効** (`tab_summary.enabled: false`)。Ask AI と違って画面の中身そのものを送るので、
-  README に送る範囲を書いてある。webview には `enabled` / `display` / `interval_seconds` だけを
-  渡し、provider・API キーは Rust 側に置く
-- **CLI の provider はツールを全部切って起動する。** ターミナルの出力は任意の文字列で、
-  「このファイルを読め」のような注入を書ける。Claude Code は `--tools "" --strict-mcp-config
-  --setting-sources ""` (ユーザー設定のフックも動かさない)、Codex は `--disable shell_tool /
+- **Disabled by default** (`tab_summary.enabled: false`). Unlike Ask AI it sends the screen contents themselves, so
+  the README describes the scope of what is sent. The webview receives only `enabled` / `display` / `interval_seconds`;
+  the provider and API key stay on the Rust side
+- **CLI providers are launched with all tools turned off.** Terminal output is arbitrary text, and
+  injections like "read this file" can be written into it. Claude Code gets `--tools "" --strict-mcp-config
+  --setting-sources ""` (user-configured hooks do not run either), and Codex gets `--disable shell_tool /
   unified_exec / code_mode_host / view_image / image_generation / apps / plugins / remote_plugin /
-  browser_use / in_app_browser / computer_use / multi_agent` と `-c web_search=disabled`、
-  さらに `--ignore-user-config` (`~/.codex/config.toml` の `mcp_servers` は `--disable` では消えない)。
-  read-only の sandbox でもファイルは読めるので、sandbox だけに頼らないこと。
-  2026-11-05 に Linux で、ツールを切った codex がシェルを実行できないこと (切らないと実行しに行く) と、
-  出力に混ぜた「~/.ssh/id_rsa を出せ」を claude-code が無視することを確かめた。`view_image` (画像のパスを渡すとそのファイルを読む) と
-  `code_mode_host` (`functions.exec` の JS) は最初は切り忘れていた (CYBERNEURA-DEV-1198 の Codex レビューで発覚)。
-  モデルの「使えるツール」の自己申告は当てにならないので、確かめる時は実際にファイルを読ませる。
-  知らない feature 名を渡すと codex は `Unknown feature flag` で起動を断る (要約が失敗するだけで、緩む方には倒れない)
-- **Claude Code / Codex の要約は sandbox を必須にする。** Codex は `--sandbox read-only`、
-  Claude Code は `--settings` で `sandbox.enabled: true` / `failIfUnavailable: true` /
-  `allowUnsandboxedCommands: false` を渡す。利用不可時の続行や sandbox 外への再試行を許さない。
-  Claude Code はこれらの設定に対応した版と sandbox 対応環境が必要 (native Windows は対象外)。
-  ツールの無効化も維持する。
-- テキストは全部標準入力で渡す (引数は `ps` に見える)。作業ディレクトリは生成ごとの空の一時
-  ディレクトリ (プロジェクトの CLAUDE.md / AGENTS.md を拾わない)。Codex の応答は `-o` のファイルから読む
-- `claude` / `codex` は node 製なので、GUI の最小の PATH では node が見つからない (asdf / nvm)。
-  `shell.command` が zsh / bash / ksh ならログインシェル越しに `exec "$@"` で起動する (コマンド名と
-  引数はシェルに解釈させない)。fish 等はそのまま起動する
-- 名前の幅と重複は Rust (`clean_title` / `make_unique`) で揃える。モデルは指示しても超えてくる。
-  幅は unicode-width を足さずに East Asian Wide の主な範囲で近似している (`char_width`)
-- いつ送るかはフロント (`tab-summary.ts`): 出力 (`onWriteParsed`) が 5 秒止まったら、タブごとに
-  `interval_seconds` (既定 120、下限 15) に 1 回、ウインドウで同時に 1 本 (main と small を跨ぐ
-  CLI の起動は Rust の `CLI_LOCK` で 1 本にする)。待ち行列に入った後に出力が再開したら列から外して
-  待ち直す。前回と同じテキストは送らない (失敗した時は覚えず、次の出力の後に送り直す)。
-  読むのは通常バッファ (vim 等の表示中も、その前にシェルで打った内容を読む)
-- 要約の行 (`display: bar`) は要約の有無に関わらず常に置く。出し入れするとターミナルの行数が動く
-- 失敗したら名前は変えず、要約の場所に理由を出す (CLI が無い・未ログインに気付けるように)
-- **実機確認は未実施。** Rust は抜き出したクレートで単体テストと、このホストの claude / codex を
-  実際に呼ぶ結合確認をした。fm と API の provider は呼んでいない
+  browser_use / in_app_browser / computer_use / multi_agent` and `-c web_search=disabled`,
+  plus `--ignore-user-config` (`mcp_servers` in `~/.codex/config.toml` is not removed by `--disable`).
+  Files can be read even in the read-only sandbox, so do not rely on the sandbox alone.
+  On 2026-11-05 on Linux we confirmed that codex with tools turned off cannot run a shell (without turning them off it goes to run one), and that
+  claude-code ignores "print ~/.ssh/id_rsa" mixed into the output. `view_image` (reads a file when given an image path) and
+  `code_mode_host` (JS via `functions.exec`) were initially forgotten (found in the Codex review of CYBERNEURA-DEV-1198).
+  The model's self-report of "available tools" cannot be trusted, so when checking, actually have it read a file.
+  If given an unknown feature name, codex refuses to start with `Unknown feature flag` (the summary just fails; it does not fall toward looser settings)
+- **Claude Code / Codex summaries require the sandbox.** Codex gets `--sandbox read-only`, and
+  Claude Code gets `sandbox.enabled: true` / `failIfUnavailable: true` /
+  `allowUnsandboxedCommands: false` via `--settings`. Continuing when unavailable or retrying outside the sandbox is not allowed.
+  Claude Code needs a version that supports these settings and an environment that supports the sandbox (native Windows is out of scope).
+  Tools remain disabled as well.
+- All text is passed via stdin (arguments are visible in `ps`). The working directory is a fresh empty temporary
+  directory per generation (so the project's CLAUDE.md / AGENTS.md are not picked up). Codex's reply is read from the `-o` file
+- `claude` / `codex` are written in node, so node cannot be found on the GUI's minimal PATH (asdf / nvm).
+  If `shell.command` is zsh / bash / ksh, they are launched through a login shell with `exec "$@"` (the command name and
+  arguments are not interpreted by the shell). fish and others are launched directly
+- Name width and duplicates are normalized in Rust (`clean_title` / `make_unique`). Models exceed the limit even when told not to.
+  Width is approximated with the main East Asian Wide ranges without adding unicode-width (`char_width`)
+- When to send is decided by the front end (`tab-summary.ts`): once output (`onWriteParsed`) has stopped for 5 seconds, at most once per
+  `interval_seconds` (default 120, minimum 15) per tab, one at a time per window (CLI launches across main and small
+  are limited to one by Rust's `CLI_LOCK`). If output resumes after entering the wait queue, it is removed from the queue and
+  waits again. The same text as last time is not sent (on failure it is not remembered and is resent after the next output).
+  It reads the normal buffer (even while vim etc. is shown, it reads what was typed in the shell before that)
+- The summary row (`display: bar`) is always present whether or not there is a summary. Adding and removing it would shift the terminal's row count
+- On failure the name is not changed, and the reason is shown in the summary area (so you notice a missing CLI or not being logged in)
+- **Not yet verified on a real machine.** For Rust, unit tests were run in an extracted crate, along with an integration check that
+  actually called this host's claude / codex. The fm and API providers have not been called
 
-## コマンド
+## Commands
 
 ```shell
 pnpm install
@@ -396,159 +396,158 @@ cd src-tauri && cargo clippy --all-targets
 pnpm exec tsc --noEmit
 ```
 
-Windows ターゲットの検査 (`--target x86_64-pc-windows-msvc`) は tauri-winres が `llvm-rc` を
-要求するので、無い mac では通らない。PR の CI (`release.yml` の test ジョブ、windows-latest) で見る。
+Checking the Windows target (`--target x86_64-pc-windows-msvc`) does not work on a mac without `llvm-rc`, because tauri-winres
+requires it. Check it in the PR CI (the test job in `release.yml`, windows-latest).
 
-## バージョンとリリース
+## Version and release
 
-version の正本は `src-tauri/tauri.conf.json` と `package.json` の 2 ファイルだけ
-(`scripts/release.sh` が触るのと同じ)。`Cargo.toml` の version はコードから参照されて
-おらず、上げない。version を変えて main に載せると `release.yml` がビルド・署名・公証して
-GitHub Release を公開するので、**PR に version bump を含めるとマージがそのままリリースになる**。
-手順は `README.md` の「リリース」。
+The source of truth for the version is just two files, `src-tauri/tauri.conf.json` and `package.json`
+(the same ones `scripts/release.sh` touches). The version in `Cargo.toml` is not referenced by the code,
+so do not bump it. When the version is changed and lands on main, `release.yml` builds, signs and notarizes it and
+publishes a GitHub Release, so **if a PR includes a version bump, merging it becomes a release**.
+The procedure is in "Release" in `README.md`.
 
 ## winget
 
-配布は `.github/workflows/winget.yml` (Komac の `update`) が release.yml の末尾から
-呼ばれて microsoft/winget-pkgs へ PR を出す。仕組みと初回登録の手順は `docs/winget.md`。
-書き換える時に効く前提:
+Distribution is done by `.github/workflows/winget.yml` (Komac's `update`), which is called from the end of release.yml
+and opens a PR to microsoft/winget-pkgs. How it works and the initial registration procedure are in `docs/winget.md`.
+Premises that matter when changing it:
 
-- `komac new` は CI で動かない (InstallModes / UpgradeBehavior 等の対話をフラグで埋められない)。
-  初回登録は manifest 手書き。`update` は既存パッケージ専用
-- fork は org 配下 (`cyberneura/winget-pkgs`)。Komac は既定で token の持ち主の fork を探すので
-  `KOMAC_FORK_OWNER` が要る。token は `GITHUB_TOKEN` 環境変数で渡すが、winget 側の操作には
-  このリポジトリの `github.token` ではなく classic PAT の `WINGET_TOKEN` を入れること
-- `on: release` では起動しない (release.yml が `github.token` で公開するイベントは他の
-  workflow を起こさない)。`workflow_call` で release.yml から繋いでいる
-- Komac は `CI=true` だと既存 PR の確認を飛ばして 2 本目を出す。重複は winget.yml 側の
-  guard で止めている
-- NSIS の stub は 32bit なので `komac analyse` は x86 と言う。`update` は URL の `x64` を
-  優先するので実害は無いが、手書き時は自分で `x64` にする
+- `komac new` does not work in CI (the interactive prompts such as InstallModes / UpgradeBehavior cannot be filled in with flags).
+  The initial registration is a hand-written manifest. `update` is only for existing packages
+- The fork is under the org (`cyberneura/winget-pkgs`). By default Komac looks for a fork owned by the token's owner, so
+  `KOMAC_FORK_OWNER` is required. The token is passed in the `GITHUB_TOKEN` environment variable, but for the winget operations
+  put in the classic PAT `WINGET_TOKEN`, not this repository's `github.token`
+- It is not triggered by `on: release` (events from release.yml publishing with `github.token` do not trigger other
+  workflows). It is chained from release.yml via `workflow_call`
+- With `CI=true`, Komac skips checking for an existing PR and opens a second one. Duplicates are stopped by a
+  guard in winget.yml
+- The NSIS stub is 32-bit, so `komac analyse` says x86. `update` prefers the `x64` in the URL,
+  so there is no real harm, but when writing by hand set it to `x64` yourself
 
-## macOS 固有の注意
+## macOS-specific caveats
 
-### 座標の単位系
+### Coordinate units
 
-**モニタを跨ぐ計算では、必ずグローバル論理ポイントに揃えてから比較する。**
-物理値は API ごとに掛かっている scale が違い、スケール混在時 (Retina + 外部 FHD 等) に
-矩形が重なって別のディスプレイを引く。
+**In calculations that span monitors, always convert to global logical points before comparing.**
+Physical values have different scales applied depending on the API, and with mixed scales (Retina + external FHD etc.)
+rectangles overlap and pick the wrong display.
 
-| 値 | 換算に使われている scale |
+| Value | Scale used for conversion |
 |---|---|
-| `cursor_position()` | **primary** の scale |
-| `Monitor::position()` / `size()` | **そのモニタ自身**の scale |
-| `TrayIconEvent` の `rect` / `position` | **トレイが載っているディスプレイ**の scale |
+| `cursor_position()` | The **primary** scale |
+| `Monitor::position()` / `size()` | **That monitor's own** scale |
+| `rect` / `position` of `TrayIconEvent` | The scale of **the display the tray is on** |
 
-トレイイベントの物理値だけからは scale を確定できない。イベント発生時はカーソルが
-アイコン上にあることを利用し、カーソルの載っているモニタから引いている
-(`tray_anchor`)。この推定には潰しきれない重なりがあり、`cursor_is_stable` の doc に
-限界を書いてある。
+The scale cannot be determined from the tray event's physical values alone. Using the fact that the cursor is on
+the icon when the event fires, it is taken from the monitor the cursor is on
+(`tray_anchor`). This estimate has overlaps that cannot be fully eliminated; the doc of `cursor_is_stable`
+describes the limits.
 
-### Dock には main の表示中だけ出す (CYBERNEURA-DEV-954)
+### Show in the Dock only while main is visible (CYBERNEURA-DEV-954)
 
-起動時は `ActivationPolicy::Accessory` と `src-tauri/Info.plist` の `LSUIElement` の両方で
-Dock に出さない。前者は dev 実行 (バンドルされない素のバイナリ)、後者はバンドル版の起動直後の
-ちらつき防止。**Accessory の間はアプリメニューが描画されないが Cmd+C / Cmd+V は効く**
-(`NSApp` の main menu オブジェクトは残り `performKeyEquivalent:` が辿るため)。
+At startup it is kept out of the Dock by both `ActivationPolicy::Accessory` and `LSUIElement` in `src-tauri/Info.plist`.
+The former is for dev runs (a bare unbundled binary), and the latter prevents flicker right after the bundled build starts.
+**While Accessory, the app menu is not drawn, but Cmd+C / Cmd+V work**
+(`NSApp`'s main menu object remains and `performKeyEquivalent:` walks it).
 
-main を出している間だけ `Regular` に切り替えて Dock に出し、隠したら `Accessory` に戻す
-(`dock_follows`)。吹き出しや About だけを開いても Dock には出さない。
+Only while main is shown, it switches to `Regular` and appears in the Dock, and goes back to `Accessory` when hidden
+(`dock_follows`). Opening only the popover or About does not put it in the Dock.
 
-- **main を出し入れする経路は全部 `dock_follows` を通す。** 出す側は `present_window`
-  (ホットキー・トレイメニュー・single-instance・Dock の Reopen が全部ここを通る) と setup の
-  初回表示。隠す側は `toggle_visibility` / `hide_window` / `hide_on_close` / `hide_on_blur`。
-  `win.hide()` を新しく書く時は忘れないこと (Dock にアイコンが残る)
-- **アプリメニューの Hide (Cmd+H) は自前の項目** (`app_menu`)。Regular の間はアプリメニューが
-  出るが、Tauri 既定の `PredefinedMenuItem::hide` は AppKit の `hide:` を直接呼ぶので、
-  `dock_follows` を通らず Dock にアイコンだけが残る。`app_menu` は既定メニューと同じ構成で
-  Hide だけを差し替え、`hide_all_windows` (全ウインドウを隠して `dock_follows`) を通す。
-  Dock アイコンの右クリックの「隠す」は AppKit が直接処理するので拾えていない
-  (Dock に残るだけで、クリックすれば Reopen で main が出る)。
-  **アプリメニューに項目を足す時は `app_menu` を直す** (既定メニューはもう使っていない)
-- 出す時は Regular に切り替えてから `show` / `set_focus` する
-- Dock アイコンのクリックは `RunEvent::Reopen` で受けて main を前に出す
-  (`.build()` してから `.run(|app, event| ...)` にしているのはこのため)
+- **Every path that shows or hides main goes through `dock_follows`.** On the showing side, `present_window`
+  (hotkeys, the tray menu, single-instance and the Dock's Reopen all go through here) and the initial display in setup.
+  On the hiding side, `toggle_visibility` / `hide_window` / `hide_on_close` / `hide_on_blur`.
+  Do not forget this when writing a new `win.hide()` (the Dock icon would remain)
+- **Hide (Cmd+H) in the app menu is our own item** (`app_menu`). While Regular the app menu
+  appears, but Tauri's default `PredefinedMenuItem::hide` calls AppKit's `hide:` directly, so it
+  does not go through `dock_follows` and only the Dock icon remains. `app_menu` has the same structure as the default menu
+  with only Hide replaced, going through `hide_all_windows` (hides all windows and calls `dock_follows`).
+  "Hide" from the Dock icon's right-click is handled directly by AppKit, so it is not caught
+  (it just remains in the Dock, and clicking it shows main via Reopen).
+  **When adding items to the app menu, change `app_menu`** (the default menu is no longer used)
+- When showing, switch to Regular first and then `show` / `set_focus`
+- Clicking the Dock icon is received as `RunEvent::Reopen` and brings main to the front
+  (this is why it does `.build()` and then `.run(|app, event| ...)`)
 
-### トレイのメニューは右クリックの時だけ付ける (macOS、CYBERNEURA-DEV-954)
+### Attach the tray menu only on right-click (macOS, CYBERNEURA-DEV-954)
 
-macOS では `TrayIconBuilder::menu()` を使わない。NSStatusItem に menu が付いていると
-AppKit がクリックでそれを開く。tray-icon 0.24 はボタンに重ねたサブビュー (`TaoTrayTarget`)
-でクリックを横取りして `show_menu_on_left_click(false)` を実現しているが、実機では左クリックでも
-メニューが出た。横取りがどこで外れるのかは確かめられていない (OS 側の処理順、サブビューの frame が
-作成時に一度合わせるだけであること、等が候補)。menu を付けなければ AppKit が開く経路が無くなる。
-右クリック (Down) の時だけ `set_menu` → `show_menu` (`performClick:`、閉じるまで戻らない) →
-`set_menu(None)` で開く (`popup_tray_menu`)。Windows は従来どおり `menu()` +
-`show_menu_on_left_click(false)` (OS のトレイが右クリックで開く)。
+On macOS, `TrayIconBuilder::menu()` is not used. If the NSStatusItem has a menu,
+AppKit opens it on click. tray-icon 0.24 implements `show_menu_on_left_click(false)` by intercepting clicks
+with a subview (`TaoTrayTarget`) overlaid on the button, but on a real machine the menu appeared even on left-click.
+Where the interception fails has not been determined (candidates include the order of processing on the OS side, and that the subview's frame is
+only fitted once at creation). Without a menu attached, there is no path for AppKit to open it.
+Only on right-click (Down) it opens with `set_menu` → `show_menu` (`performClick:`, which does not return until closed) →
+`set_menu(None)` (`popup_tray_menu`). Windows stays as before with `menu()` +
+`show_menu_on_left_click(false)` (the OS tray opens it on right-click).
 
-### ログイン時の自動起動
+### Launching at login
 
-トレイメニューの Launch at Login は `auto-launch` crate で、macOS は
-`~/Library/LaunchAgents/Astragal.plist`、Windows は Run レジストリに登録する
-(CYBERNEURA-DEV-894)。登録には `--minimized` が付き、これで起動すると main を出さずに
-メニューバーだけに常駐する (`launched_minimized`)。
+Launch at Login in the tray menu uses the `auto-launch` crate and registers
+`~/Library/LaunchAgents/Astragal.plist` on macOS and the Run registry key on Windows
+(CYBERNEURA-DEV-894). The registration includes `--minimized`, and launching with it keeps the app resident
+in the menu bar only, without showing main (`launched_minimized`).
 
-- **macOS は LaunchAgent 方式に固定している。** AppleScript のログイン項目は引数を
-  渡せず、`--minimized` が届かない
-- **tauri-plugin-autostart は使っていない。** 中身は同じ auto-launch だが、登録する
-  パスを加工できない。auto-launch 0.5 はパスをそのまま書くので、Windows は引用符で囲み
-  (空白入りのパスが途中で切れる)、macOS は `& < >` を含むパスの登録を断っている
-  (plist に XML エスケープせずに埋め込まれ、壊れた plist が「登録成功」になる)。
-  `autostart_program` / `check_registrable` を参照。登録を断るのは有効化の時だけで、
-  確認・解除には掛けない (登録後にアプリを移すと残った登録を外せなくなる)。auto-launch を上げる時はこの 2 点が直っていないか見る
-- 有効かどうかはアプリの設定に持たず、毎回 OS 側 (plist / レジストリの有無) から読む。
-  チェックの表示も切り替え後に読み直して合わせる
-- 切り替えの失敗はダイアログ (`tauri-plugin-dialog`) で出す。`warn()` はターミナルを開いた時に
-  まとめて表示する仕組みなので、トレイからの操作の結果を伝えられない
-- 登録するパスは `current_exe()` を canonicalize せずに使う (シンボリックリンク越しの版ごとの
-  実体を登録すると、更新で旧版が消えた時に起動しなくなる)
-- plist / レジストリにはその時の実行ファイルのパスが書かれる。dev ビルドで有効にすると
-  dev のバイナリが登録されるので、確認後は OFF に戻すこと
+- **macOS is fixed to the LaunchAgent method.** AppleScript login items cannot
+  pass arguments, so `--minimized` would not arrive
+- **tauri-plugin-autostart is not used.** Internally it is the same auto-launch, but the registered
+  path cannot be adjusted. auto-launch 0.5 writes the path as is, so on Windows it is wrapped in quotes
+  (a path with spaces gets cut off), and on macOS registration of paths containing `& < >` is refused
+  (they are embedded into the plist without XML escaping, and a broken plist counts as "registered successfully").
+  See `autostart_program` / `check_registrable`. Registration is refused only when enabling, and the check is not applied
+  to checking or removing (if the app is moved after registration, the leftover registration could not be removed). When upgrading auto-launch, check whether these two points have been fixed
+- Whether it is enabled is not stored in the app's settings; it is read from the OS side (whether the plist / registry entry exists) every time.
+  The check mark is also reread and updated after toggling
+- Toggle failures are shown in a dialog (`tauri-plugin-dialog`). `warn()` is a mechanism that shows messages together
+  when a terminal is opened, so it cannot convey the result of an operation from the tray
+- The registered path uses `current_exe()` without canonicalizing (registering the per-version real path behind a symbolic
+  link would stop it launching once an update removes the old version)
+- The plist / registry gets the executable path at that time. Enabling it on a dev build registers the
+  dev binary, so turn it back OFF after checking
 
-### 落ちた理由の記録とイベント処理中の Objective-C 例外 (CYBERNEURA-DEV-1204)
+### Recording crash causes and Objective-C exceptions during event handling (CYBERNEURA-DEV-1204)
 
-`abort() called` / 「panic in a function that cannot unwind」で、スタックの最上位が tao の
-`extern "C"` の `-[TaoApp sendEvent:]` のランディングパッドになるクラッシュは、**その下で投げられた
-NSException が Rust のフレームを越えようとして abort したもの**。release は `panic = "abort"` なので、
-Rust の panic なら panic した地点で abort し、最上位に tao のランディングパッドは来ない。普通の Cocoa
-アプリなら `-[NSApplication run]` が受け止めて報告するだけの例外で、何が投げたかは分かっていない
-(クラッシュレポートからは読めない)。ターミナルで文字を打ちながら Karabiner Elements で日本語入力を
-切り替えた時に起きたことがある。beckwell にも同じ仕組みがある。
+A crash with `abort() called` / "panic in a function that cannot unwind" whose top of stack is the landing pad of tao's
+`extern "C"` `-[TaoApp sendEvent:]` is **an NSException thrown below it that aborted while trying to cross a Rust frame**.
+release uses `panic = "abort"`, so a Rust panic would abort at the point of panicking, and tao's landing pad would not be at the top.
+In an ordinary Cocoa app it is an exception that `-[NSApplication run]` would catch and merely report; what threw it is unknown
+(it cannot be read from the crash report). It has happened while typing in the terminal and switching Japanese input with
+Karabiner Elements. beckwell has the same mechanism.
 
-- `crash_log::install` を `run()` で設定を読む前に呼ぶ。ログは macOS では `~/Library/Logs/Astragal/`、
-  それ以外では `dirs::data_local_dir()/Astragal/logs/`。1MB を超えたら書き直す
-- panic hook: メッセージ・場所・スレッド・バックトレースを `panic.log` に書いてから既定の hook を呼ぶ。
-  クラッシュレポートにはメッセージが残らず、release は strip 済みなので、場所 (`file:line`) はここでしか読めない
-  (バックトレースはアドレスだけになる)
-- NSApplication と NSWindow 自身の `-sendEvent:` (tao の `[super sendEvent:]` が着く先) を `exception_guard.m` の
-  `@try` 付きの実装に差し替え、受け止めた例外は `NSLog` と `exceptions.log` に書いて続ける
-  (`-reportException:` は `NSApplicationCrashOnExceptions` が有効だとそこで落ちるので使わない)。
-  NSWindow も包むのは、`-[TaoWindow sendEvent:]` (これも `extern "C"`) と、TaoApp が Cmd 付きの keyUp を
-  `[keyWindow sendEvent:]` で直接送る経路が NSApplication の `-sendEvent:` を通らないため。
-  受け止められるのは Rust のフレームを挟まずに届いた例外だけ (途中の objc2 のメソッド等から
-  呼んだ AppKit が投げたものは、そのフレームで abort する。objc2 の `define_class!` のメソッドは
-  `extern "C-unwind"` だが、`panic = "abort"` なので外来の例外もそこで abort する)。**次に同じ例外が出たら、この
-  ログの callStackSymbols で投げた場所が分かる**
-- ログは POSIX の `open` で追記する。`NSFileManager` の `createFileAtPath:` は一時ファイルを経由して置き換えるので、
-  置けない環境がある (Claude Code のサンドボックスの中で失敗した)
-- **`objc2::exception::catch` で書き直さないこと。** 閉包を Rust のトランポリン越しに呼ぶので、
-  `panic = "abort"` では例外がそのフレームを通った時点で abort する。投げる側と受け止める側の
-  間に Rust のフレームを挟まないために Objective-C で書いている
-- `.m` は build.rs が macOS ターゲットの時だけ cc でビルドする。**Linux では検査できない**
-  (PR の CI の macOS の test ジョブで初めてコンパイルされる)。例外を受け止めることは Rust のテストでは
-  確かめられない (イベントを流す NSApplication が要る)。確かめる時は、`.m` と一緒に clang でビルドした小さな
-  プログラムで `[NSApp sendEvent:(NSEvent *)[NSObject new]]` と `[window sendEvent:...]` を呼ぶ
-  (unrecognized selector の例外になる)。guard が無ければプロセスが終わり、あればログに 1 件ずつ残る
-- 解析の手順: Release の dmg を展開して arm64 のスライスを取り出し (UUID がレポートの
-  `slice_uuid` と一致するか見る)、strip 済みなので LC_FUNCTION_STARTS と `__unwind_info` の
-  LSDA からフレームの関数とランディングパッドを引いた。panic 経路の関数は
-  `"panic in a function that cannot unwind"` などの文字列参照で分かる
+- `crash_log::install` is called in `run()` before the settings are read. Logs go to `~/Library/Logs/Astragal/` on macOS
+  and `dirs::data_local_dir()/Astragal/logs/` elsewhere. Rewritten once over 1MB
+- Panic hook: writes the message, location, thread and backtrace to `panic.log` and then calls the default hook.
+  The crash report does not keep the message, and release is stripped, so the location (`file:line`) can only be read here
+  (the backtrace is addresses only)
+- `-sendEvent:` of NSApplication and NSWindow themselves (where tao's `[super sendEvent:]` lands) is replaced with an implementation
+  with `@try` in `exception_guard.m`, and caught exceptions are written to `NSLog` and `exceptions.log` and execution continues
+  (`-reportException:` is not used because it crashes there when `NSApplicationCrashOnExceptions` is enabled).
+  NSWindow is wrapped too because `-[TaoWindow sendEvent:]` (also `extern "C"`) and the path where TaoApp sends keyUp with Cmd
+  directly with `[keyWindow sendEvent:]` do not go through NSApplication's `-sendEvent:`.
+  Only exceptions that arrive without a Rust frame in between can be caught (an exception thrown by AppKit called from, say, an objc2
+  method in the middle aborts at that frame. objc2's `define_class!` methods are `extern "C-unwind"`, but with
+  `panic = "abort"` foreign exceptions abort there too). **The next time the same exception occurs, the callStackSymbols in
+  this log will show where it was thrown**
+- The log is appended with POSIX `open`. `NSFileManager`'s `createFileAtPath:` replaces via a temporary file, so
+  there are environments where it cannot be placed (it failed inside the Claude Code sandbox)
+- **Do not rewrite this with `objc2::exception::catch`.** It calls the closure through a Rust trampoline, so
+  with `panic = "abort"` it aborts as soon as the exception passes that frame. It is written in Objective-C so that
+  no Rust frame sits between the thrower and the catcher
+- The `.m` is built with cc by build.rs only for macOS targets. **It cannot be checked on Linux**
+  (it is first compiled in the macOS test job of the PR CI). Catching exceptions cannot be confirmed by Rust tests
+  (it needs an NSApplication that dispatches events). To check, build a small program with clang together with the `.m` and call
+  `[NSApp sendEvent:(NSEvent *)[NSObject new]]` and `[window sendEvent:...]`
+  (it becomes an unrecognized selector exception). Without the guard the process exits; with it, one entry per call is left in the log
+- Analysis procedure: extract the Release dmg and take out the arm64 slice (check that its UUID matches the report's
+  `slice_uuid`); since it is stripped, the frames' functions and landing pads were found from LC_FUNCTION_STARTS and the
+  LSDA in `__unwind_info`. Functions on the panic path can be identified by string references such as
+  `"panic in a function that cannot unwind"`
 
-### 非表示ウインドウで requestAnimationFrame を待たない
+### Do not wait for requestAnimationFrame in a hidden window
 
-webview の初期背景は白なので、新しいウインドウは `visible(false)` で作り、front が DOM を
-埋めてからコマンドで show している (`about` / `licenses`)。この「show してもらう合図」を
-`requestAnimationFrame` の中で送ると永遠に出ない。WebKit は見えていないページの
-フレームを止めるため。DOM 更新の直後にそのまま invoke する。
+The webview's initial background is white, so new windows are created with `visible(false)` and shown via a command
+after the front end has filled in the DOM (`about` / `licenses`). If this "please show me" signal is sent inside
+`requestAnimationFrame`, it never appears, because WebKit stops frames for pages that are not visible.
+Invoke it directly right after updating the DOM.
 
 ### macOS app icon
 
@@ -562,14 +561,14 @@ Native rendering is verified by `.github/workflows/macos-icons.yml`.
 
 Windows and menu-bar assets keep their independent generators.
 
-## 依存ライブラリの挙動を調べる時
+## When investigating the behaviour of dependencies
 
-Tauri / tao / tray-icon は、ドキュメントに書かれていない単位系や前提で動いている
-箇所がある。推測せず `~/.cargo/registry/src/*/<crate>-<version>/` のソースを読む。
-今回の座標系の問題は全てそこで確定した。
+Tauri / tao / tray-icon have places that work with units and assumptions not written in their documentation.
+Do not guess; read the sources in `~/.cargo/registry/src/*/<crate>-<version>/`.
+The coordinate system problems this time were all settled there.
 
-Tauri の API は context7 MCP でも確認できる。
+The Tauri API can also be checked with the context7 MCP.
 
-## ローカル配置
+## Local deployment
 
-`pnpm deploy:local` は Developer ID 署名・Hardened Runtime・タイムスタンプ付きの `.app` を、Keychain の `cyberneura-notary` (`NOTARY_PROFILE` で変更可) で Apple 公証し、staple と Gatekeeper の検証後に `/Applications` に配置する。公証失敗時は既存アプリを置き換えず、稼働中のターミナルセッションも終了しない。`--timestamp=none` での再署名は公証チケットを無効化するため行わない。
+`pnpm deploy:local` notarizes a `.app` signed with Developer ID, Hardened Runtime and a timestamp with Apple using `cyberneura-notary` in the Keychain (changeable with `NOTARY_PROFILE`), and after stapling and Gatekeeper verification places it in `/Applications`. If notarization fails, the existing app is not replaced and running terminal sessions are not terminated. Re-signing with `--timestamp=none` is not done, because it invalidates the notarization ticket.
