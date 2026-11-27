@@ -2,6 +2,7 @@ mod agent_process;
 mod ai;
 mod chat_window;
 mod cli;
+mod command_suggest;
 mod config;
 mod crash_log;
 mod mouse_integration;
@@ -129,8 +130,16 @@ struct FrontendConfig {
     ai_enabled: bool,
     /// タブ名と要約の自動生成。provider と API キーは webview に渡さない
     tab_summary: FrontendTabSummary,
+    /// ↓ キーのコマンド提案。provider と API キーは webview に渡さない
+    command_suggest: FrontendCommandSuggest,
     agent_chat: config::AgentChatConfig,
     home_directory: String,
+}
+
+#[derive(Serialize)]
+struct FrontendCommandSuggest {
+    enabled: bool,
+    context_turns: usize,
 }
 
 #[derive(Serialize)]
@@ -161,6 +170,14 @@ fn get_config(app: AppHandle) -> FrontendConfig {
         ai_enabled: loaded.config.ai.enabled,
         agent_chat: loaded.config.agent_chat.clone(),
         home_directory: dirs::home_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
+        command_suggest: FrontendCommandSuggest {
+            enabled: loaded.config.command_suggest.enabled,
+            context_turns: loaded
+                .config
+                .command_suggest
+                .context_turns
+                .min(command_suggest::MAX_TURNS),
+        },
         tab_summary: FrontendTabSummary {
             enabled: loaded.config.tab_summary.enabled,
             display: loaded.config.tab_summary.display,
@@ -188,6 +205,36 @@ async fn tab_summary_generate(
         )
     };
     tab_summary::generate(&summary_config, &ai_config, &shell, &content, &other_titles).await
+}
+
+/// ↓ キーのコマンド提案 (command_suggest.rs)。`turns` はフロントが選んだ直近の完了した
+/// コマンドと出力 (秘密らしい語を含むターンは除いてある)、`cwd` は OSC 7 の今のディレクトリ。
+/// 打ち込みはフロントが行い、実行はしない。
+#[tauri::command]
+async fn command_suggest_generate(
+    app: AppHandle,
+    cwd: Option<String>,
+    turns: Vec<String>,
+) -> Result<Option<String>, String> {
+    let (suggest_config, summary_config, ai_config, shell) = {
+        let state = app.state::<AppState>();
+        let config = &state.config.config;
+        (
+            config.command_suggest.clone(),
+            config.tab_summary.clone(),
+            config.ai.clone(),
+            config.shell.resolve_command(),
+        )
+    };
+    command_suggest::suggest(
+        &suggest_config,
+        &summary_config,
+        &ai_config,
+        &shell,
+        cwd.as_deref(),
+        &turns,
+    )
+    .await
 }
 
 /// Ask AI: 依頼からシェルコマンドを 1 行作ってもらう。打ち込みはフロントが行い、
@@ -352,7 +399,9 @@ fn create_terminal(app: AppHandle, window: WebviewWindow, launch: Option<u32>) -
 
     let mut cmd = shell_command(&app_state.config.config.shell, launch.as_ref());
     let integration = if window.label() == "main"
-        && app_state.config.config.agent_chat.enabled
+        // OSC 133 の境界はチャットの共有範囲と ↓ のコマンド提案 (command-suggest.ts) が使う
+        && (app_state.config.config.agent_chat.enabled
+            || app_state.config.config.command_suggest.enabled)
         && launch.as_ref().and_then(|l| l.exec.as_ref()).is_none()
     {
         shell_integration::install(&mut cmd, &app_state.config.config.shell)?
@@ -2121,6 +2170,7 @@ pub fn run() {
             chat_window::set_chat_open,
             ai_suggest_command,
             tab_summary_generate,
+            command_suggest_generate,
             app_info,
             mouse_integration::mouse_integration,
             mouse_integration::set_mouse_integration,

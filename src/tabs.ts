@@ -21,6 +21,7 @@ import {
 } from "./search";
 import { IS_WINDOWS, shortcutLabel } from "./platform";
 import { closeAi, initAi, openAi, syncAiWithActiveTab } from "./ai";
+import { cancelCommandSuggest } from "./command-suggest";
 import { initRemoteDrop } from "./remote-drop";
 import {
   displaysInTooltip,
@@ -262,6 +263,7 @@ function showTab(tabId: number): boolean {
   });
   syncSearchWithActiveTab();
   syncAiWithActiveTab();
+  cancelCommandSuggest();
   syncAgentChat();
   syncTabSummaryWithActiveTab();
   return true;

@@ -27,6 +27,7 @@ Code comments are still in Japanese at the moment. cyberneura's other public rep
 | `src/tabs.ts` | Tab management, Cmd key bindings, Ctrl+Tab tab cycling, Cmd+Shift+[ / ] tab moves, Cmd+K clear |
 | `src/ai.ts` / `src-tauri/src/ai.rs` | Cmd+I Ask AI (turns a request into a one-line shell command and pastes it at the prompt. Disabled by default) |
 | `src/tab-summary.ts` / `src-tauri/src/tab_summary.rs` | Automatic generation of tab names and summaries (when to send and display / launching the provider and shaping the reply. Disabled by default) |
+| `src/command-suggest.ts` / `src/command-suggest-state.ts` / `src-tauri/src/command_suggest.rs` | Down at an empty prompt suggests the next command (key handling and pasting / the pure checks / the prompt and reply parsing. Disabled by default) |
 | `src/remote-drop.ts` / `src-tauri/src/remote_drop.rs` | Dropping files onto a tab running ssh to send them with scp (drop zone and confirmation dialog / interpreting the ssh argv and building scp arguments) |
 | `src/mouse-integration.ts` / `src/mouse-gate.ts` / `src-tauri/src/mouse_integration.rs` | Mouse integration ON / OFF (tab bar button, View menu, tray menu / the gatekeeper that stops xterm's mouse reports / app-wide state and menu check marks) |
 | `src/search.ts` | The Cmd+F search bar (xterm-addon-search). One per window; it searches the active tab |
@@ -383,6 +384,38 @@ summary. Design premises:
 - On failure the name is not changed, and the reason is shown in the summary area (so you notice a missing CLI or not being logged in)
 - **Not yet verified on a real machine.** For Rust, unit tests were run in an extracted crate, along with an integration check that
   actually called this host's claude / codex. The fm and API providers have not been called
+
+## Next-command suggestions (CYBERNEURA-DEV-1393)
+
+Down at an empty shell prompt sends the recent completed turns to a provider and pastes the one-line reply
+(`command_suggest`, off by default). Design premises:
+
+- **Down is taken only when `TerminalContext.atPrompt && !dirty`** (OSC 133 A seen and nothing typed since;
+  `canSuggest`). That needs `shell_integration.rs`, so in practice only main's zsh. After typing or Up
+  (`dirty`), Down goes to the shell as history navigation; it is also left alone in the alternate buffer.
+  It is caught in the capture phase on `document`, only when the target is the active session's textarea
+  (not the search bar, Ask AI or the chat input), and not while composing with an IME (`compositionstart` / keyCode 229).
+  It is initialized from `main.ts` only (small has no OSC 133 boundaries). `create_terminal` installs the shell
+  integration when `agent_chat.enabled || command_suggest.enabled`.
+  A line put into zsh's editor by `print -z` / `zle-line-init` is not seen (no xterm input), so it looks empty
+- **It never executes.** The reply is pasted with `terminal.paste()` and no Enter. `parse_reply` in `command_suggest.rs`
+  rejects multi-line replies and control characters (a newline is Enter in a pty). It is pasted only if the same tab
+  is still active, still at the prompt, the `revision` is unchanged, the terminal textarea has focus and no IME
+  composition is in progress (`canPaste`); otherwise it is dropped silently. Switching tabs cancels the request
+  (`cancelCommandSuggest` from `activateTab`), so coming back does not paste the old reply
+- **What is sent is `TerminalContext.snapshot(context_turns, agent_chat.blacklist)`** (whole turns with
+  secret-looking words are excluded, as for agent chat), the OSC 7 cwd, and the OS / shell names.
+  The cwd goes into the data (`<terminal>`), not the instructions, on one line. Rust trims each turn to 2,000
+  characters keeping the first line (the command) and the tail, and the total to 8,000 (2,000 for fm); the newest
+  turn always fits
+- **Providers reuse `tab_summary::ask`** (extracted from `tab_summary::generate`): the CLIs run with all tools off,
+  in an empty temporary directory, sandbox required, one at a time via `CLI_LOCK`. `CommandSuggestConfig::provider_config`
+  builds a `TabSummaryConfig` with this feature's provider / model / command, and `tab_summary.api_key`
+  **only when `tab_summary.provider` is the same** (otherwise an OpenAI key would be sent to Anthropic or vice versa).
+  There is no separate API key field (the Settings window's secret handling covers only `ai.api_key` / `tab_summary.api_key`)
+- The webview receives only `enabled` / `context_turns`
+- `pnpm test:command-suggest` tests the two checks. **Not yet verified on a real machine**; the providers were not called
+  from this feature (the same launcher as tab summaries)
 
 ## Commands
 

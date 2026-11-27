@@ -237,6 +237,29 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    title: "Next-command suggestions",
+    note: "At an empty shell prompt (main window, zsh), press Down to have the provider suggest the next command. It is typed in without Enter. Down still walks the history once you have typed or pressed Up.",
+    fields: [
+      { path: "command_suggest.enabled", label: "Suggest with Down", help: "Sends the OS and shell names, the current directory and the last completed commands with their output. Off by default.", kind: "checkbox" },
+      {
+        path: "command_suggest.provider",
+        label: "Provider",
+        help: "openai / anthropic use the API key of Tab names and summaries.",
+        kind: "select",
+        options: [
+          ["claude-code", "Claude Code CLI"],
+          ["codex", "Codex CLI"],
+          ["fm", "Apple Foundation Models (on-device)"],
+          ["openai", "OpenAI API"],
+          ["anthropic", "Anthropic API"],
+        ],
+      },
+      { path: "command_suggest.model", label: "Model", help: "Empty uses the provider's default.", kind: "text", placeholder: "Default" },
+      { path: "command_suggest.command", label: "CLI command", help: "Path or name of claude / codex / fm. Empty uses the usual name.", kind: "text", placeholder: "Default" },
+      { path: "command_suggest.context_turns", label: "Commands to send", help: "How many of the last completed commands (with output) to send, 0-20. Turns matching the agent chat blacklist are left out.", kind: "integer" },
+    ],
+  },
+  {
     title: "Agent chat",
     note: "The chat pane of the main window, using your Claude Code / Codex CLI login.",
     fields: [

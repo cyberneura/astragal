@@ -607,3 +607,31 @@ html, body {
 ::selection {
   background: #3a4a6b;
 }
+
+/* ── 次のコマンドの提案 (↓、CYBERNEURA-DEV-1393) ─────────────────────────── */
+
+#command-suggest-status {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 10;
+  max-width: min(560px, calc(100% - 28px));
+  padding: 4px 10px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 40%);
+  color: #9a9a9a;
+  font-size: 11px;
+  white-space: pre-wrap;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+#command-suggest-status[hidden] {
+  display: none;
+}
+
+#command-suggest-status.error {
+  color: #ff8a85;
+}

@@ -312,6 +312,13 @@ tab_summary: # Tab names and summaries. Off by default
   command: "" # CLI to run for claude-code / codex / fm; empty uses claude / codex / fm
   api_key: "" # for openai / anthropic
   interval_seconds: 120 # at least 15
+
+command_suggest: # Next-command suggestions with Down. Off by default
+  enabled: false
+  provider: claude-code # claude-code / codex / fm / openai / anthropic
+  model: "" # empty uses the provider's default
+  command: "" # CLI to run for claude-code / codex / fm
+  context_turns: 3 # completed commands to send, 0-20
 ```
 
 Hotkey modifiers are `Control` / `Option` (`Alt`) / `Shift` / `Command` (`Cmd`, `Super`).
@@ -430,6 +437,37 @@ tab_summary:
   executable (`.exe`), not a `.cmd` shim.
 - When a summary fails (the CLI is not installed, not logged in, no API key…), the reason
   is shown where the summary would be and the tab keeps its name.
+
+### Next-command suggestions
+
+At an empty shell prompt, press **Down** and Astragal asks the provider for the next
+command you are likely to run (for example, the fix for the command that just failed, or
+its usual follow-up) and types it in. **It never presses Enter**; you read it and decide.
+
+```yaml
+command_suggest:
+  enabled: true
+  provider: claude-code # or codex / fm / openai / anthropic
+```
+
+- **When Down is taken**: only in the main window's zsh tabs (where Astragal knows the
+  prompt boundaries), at the prompt, before you have typed anything on it. Once you type
+  or press Up, Down walks the shell history as usual. In vim and other full-screen
+  programs Down is left alone.
+- **What is sent**: the OS and shell names, the current directory, and the last
+  `context_turns` (3 by default) completed commands with their output (each turn up to
+  2,000 characters, 8,000 in total; 2,000 for `fm`). Turns containing secret-looking words
+  (`password`, `token`, `api_key`, ... and `agent_chat.blacklist`) are left out entirely.
+- **Providers** are the same as for tab names and summaries, run the same way (the CLIs
+  without tools, in an empty directory, with sandboxing required). `openai` / `anthropic`
+  use `tab_summary.api_key` only when `tab_summary` uses the same provider; otherwise
+  `OPENAI_API_KEY`, or `ai.api_key` / `ANTHROPIC_API_KEY`.
+- A reply with more than one line or control characters is rejected. If you type, leave
+  the prompt, switch tabs, start typing with an input method or move the focus away while
+  waiting, the suggestion is dropped.
+- Astragal sees keystrokes, not zsh's line editor: a line placed in the editor by
+  `print -z` or a `zle-line-init` widget still looks like an empty prompt, and the
+  suggestion is inserted at the cursor.
 
 ### config_override_command
 
@@ -558,6 +596,7 @@ pnpm notices
 cd src-tauri && cargo test
 pnpm exec tsc --noEmit
 pnpm test:mouse
+pnpm test:command-suggest
 ```
 
 ## Icons

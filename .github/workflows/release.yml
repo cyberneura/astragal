@@ -187,6 +187,9 @@ jobs:
       - name: Test the Settings window helpers
         run: pnpm test:settings
 
+      - name: Test the next-command suggestion checks
+        run: pnpm test:command-suggest
+
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
