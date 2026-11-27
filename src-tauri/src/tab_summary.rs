@@ -117,15 +117,6 @@ fn user_message(content: &str) -> String {
     format!("<terminal>\n{content}\n</terminal>")
 }
 
-/// CLI に標準入力で渡す 1 本のプロンプト (CLI はシステムプロンプトを分けて渡さない)。
-fn cli_prompt(content: &str, other_titles: &[String]) -> String {
-    format!(
-        "{}\n\n{}",
-        instructions(other_titles),
-        user_message(content)
-    )
-}
-
 // ── 出力の整形 ───────────────────────────────────────────────────────────────
 
 /// 端末での表示幅 (半角 = 1、全角 = 2)。East Asian Wide / Fullwidth の主な範囲だけを見る。
@@ -619,7 +610,7 @@ async fn ask_anthropic(
     )
     .await?;
     if value["stop_reason"] == "refusal" {
-        return Err("The model declined to summarize this tab.".to_string());
+        return Err("The model declined the request.".to_string());
     }
     Ok(value["content"]
         .as_array()
@@ -628,6 +619,52 @@ async fn ask_anthropic(
         .filter(|block| block["type"] == "text")
         .filter_map(|block| block["text"].as_str())
         .collect())
+}
+
+/// provider に指示 (`instructions`) と本文 (`content`、`<terminal>` で囲んで渡す) を送り、
+/// 返ってきたテキストをそのまま返す。tab_summary と command_suggest で共有する。
+///
+/// CLI の provider は全部のツールを切り、生成ごとの空の作業ディレクトリで起動する
+/// (`cli_invocation`)。起動は `CLI_LOCK` で 1 本ずつにする。
+pub(crate) async fn ask(
+    config: &TabSummaryConfig,
+    ai: &AiConfig,
+    shell: &Path,
+    instructions: &str,
+    content: &str,
+) -> Result<String, String> {
+    let model = model(config);
+    match config.provider {
+        TabSummaryProvider::OpenAi | TabSummaryProvider::Anthropic => {
+            let api_key = config.resolve_api_key(ai).ok_or_else(|| {
+                "No API key for the provider. Set tab_summary.api_key in the config file."
+                    .to_string()
+            })?;
+            let model = model.unwrap_or_default();
+            if config.provider == TabSummaryProvider::OpenAi {
+                ask_openai(&api_key, &model, instructions, content).await
+            } else {
+                ask_anthropic(&api_key, &model, instructions, content).await
+            }
+        }
+        _ => {
+            let config = config.clone();
+            let shell = shell.to_path_buf();
+            let prompt = format!("{instructions}\n\n{}", user_message(content));
+            tauri::async_runtime::spawn_blocking(move || {
+                // 前の生成が panic しても錠は使い続ける (守っているのは起動の数だけ)
+                let _running = CLI_LOCK
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let workdir = TempDir::new()?;
+                let invocation = cli_invocation(&config, model.as_deref(), &workdir.0)
+                    .ok_or_else(|| "This provider is not a command.".to_string())?;
+                run_cli(&invocation, &shell, &prompt)
+            })
+            .await
+            .map_err(|e| format!("The provider task failed: {e}"))?
+        }
+    }
 }
 
 /// タブの末尾のテキストから、名前と要約を作る。
@@ -652,40 +689,7 @@ pub async fn generate(
     if content.is_empty() {
         return Err("The tab has no text yet.".to_string());
     }
-    let model = model(config);
-
-    let reply = match config.provider {
-        TabSummaryProvider::OpenAi | TabSummaryProvider::Anthropic => {
-            let api_key = config.resolve_api_key(ai).ok_or_else(|| {
-                "No API key for tab summaries. Set tab_summary.api_key in the config file."
-                    .to_string()
-            })?;
-            let model = model.unwrap_or_default();
-            let instructions = instructions(other_titles);
-            if config.provider == TabSummaryProvider::OpenAi {
-                ask_openai(&api_key, &model, &instructions, content).await?
-            } else {
-                ask_anthropic(&api_key, &model, &instructions, content).await?
-            }
-        }
-        _ => {
-            let config = config.clone();
-            let shell = shell.to_path_buf();
-            let prompt = cli_prompt(content, other_titles);
-            tauri::async_runtime::spawn_blocking(move || {
-                // 前の生成が panic しても錠は使い続ける (守っているのは起動の数だけ)
-                let _running = CLI_LOCK
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                let workdir = TempDir::new()?;
-                let invocation = cli_invocation(&config, model.as_deref(), &workdir.0)
-                    .ok_or_else(|| "This provider is not a command.".to_string())?;
-                run_cli(&invocation, &shell, &prompt)
-            })
-            .await
-            .map_err(|e| format!("The tab summary task failed: {e}"))??
-        }
-    };
+    let reply = ask(config, ai, shell, &instructions(other_titles), content).await?;
     parse_reply(&reply, other_titles)
 }
 

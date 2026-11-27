@@ -274,6 +274,12 @@ pub fn validate(config: &Config, override_command: &str) -> Vec<FieldError> {
             format!("Must be between 0 and {MAX_CONTEXT_TURNS}."),
         );
     }
+    if config.command_suggest.context_turns > MAX_CONTEXT_TURNS {
+        push(
+            "command_suggest.context_turns",
+            format!("Must be between 0 and {MAX_CONTEXT_TURNS}."),
+        );
+    }
     let command = override_command.trim();
     if !command.is_empty() && shlex::split(command).is_none_or(|argv| argv.is_empty()) {
         push(

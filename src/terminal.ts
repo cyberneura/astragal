@@ -13,6 +13,7 @@ import { attachMouseIntegration } from "./mouse-integration";
 import { IS_WINDOWS } from "./platform";
 import { createSearchAddon } from "./search";
 import type { TabSummaryConfig } from "./tab-summary";
+import type { CommandSuggestConfig } from "./command-suggest";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -27,6 +28,7 @@ export interface AppConfig {
   ai_enabled: boolean;
   /** タブ名と要約の自動生成 (tab-summary.ts) */
   tab_summary: TabSummaryConfig;
+  command_suggest: CommandSuggestConfig;
   agent_chat: AgentChatConfig;
   home_directory: string;
 }

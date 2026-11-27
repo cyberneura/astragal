@@ -154,6 +154,22 @@ pub(crate) const CONFIG_TEMPLATE: &str = r##"# Astragal config file
 #   # The shortest time between two updates of the same tab (seconds, at least 15).
 #   interval_seconds: 120
 
+# Next-command suggestions (main window, zsh only): at an empty shell prompt, press
+# Down to have the provider suggest the next command. It is typed in without Enter;
+# you decide whether to run it. Down still walks the history once you have typed or
+# pressed Up. Off by default. What is sent: the OS and shell names, the current
+# directory, and the last context_turns completed commands with their output
+# (turns matching agent_chat.blacklist or the built-in secret words are left out).
+# command_suggest:
+#   enabled: true
+#   # claude-code / codex / fm / openai / anthropic, as for tab_summary.
+#   # openai / anthropic use tab_summary.api_key when tab_summary uses the same
+#   # provider; otherwise OPENAI_API_KEY, or ai.api_key / ANTHROPIC_API_KEY.
+#   provider: claude-code
+#   model: ""
+#   command: ""
+#   context_turns: 3  # 0-20
+
 # Agent chat (main window only). Opens Claude Code / Codex using your CLI login.
 # Nothing is sent until you submit a chat message.
 # agent_chat:
@@ -187,7 +203,60 @@ pub struct Config {
     pub theme: BTreeMap<String, String>,
     pub ai: AiConfig,
     pub tab_summary: TabSummaryConfig,
+    pub command_suggest: CommandSuggestConfig,
     pub agent_chat: AgentChatConfig,
+}
+
+/// ↓ キーで次に打つコマンドを提案する (command_suggest.rs)。既定は無効。
+///
+/// 直近の完了したコマンドと出力を provider へ送るので、tab_summary と同じく既定は OFF。
+/// openai / anthropic の API キーは、tab_summary が同じ provider ならその api_key を使う。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CommandSuggestConfig {
+    pub enabled: bool,
+    pub provider: TabSummaryProvider,
+    /// 空なら provider ごとの既定 (tab_summary.rs の `default_model`)
+    pub model: String,
+    /// CLI の provider で起動するコマンド。空なら claude / codex / fm
+    pub command: String,
+    /// 送る完了したコマンドの数 (0-20)
+    pub context_turns: usize,
+}
+
+impl Default for CommandSuggestConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: TabSummaryProvider::ClaudeCode,
+            model: String::new(),
+            command: String::new(),
+            context_turns: 3,
+        }
+    }
+}
+
+impl CommandSuggestConfig {
+    /// provider を呼ぶための設定。
+    ///
+    /// API キーは **tab_summary と同じ provider の時だけ** tab_summary.api_key を使う。
+    /// 違う provider の時に渡すと、OpenAI のキーを Anthropic へ送る (またはその逆) ことになる。
+    /// その場合は空にして、`resolve_api_key` の代わり (ai.api_key / 環境変数) に任せる
+    pub fn provider_config(&self, tab_summary: &TabSummaryConfig) -> TabSummaryConfig {
+        let api_key = if tab_summary.provider == self.provider {
+            tab_summary.api_key.clone()
+        } else {
+            String::new()
+        };
+        TabSummaryConfig {
+            enabled: true,
+            provider: self.provider,
+            model: self.model.clone(),
+            command: self.command.clone(),
+            api_key,
+            ..TabSummaryConfig::default()
+        }
+    }
 }
 
 /// Main-window agent chat. Additional blacklist entries never replace built-ins.
